@@ -88,17 +88,23 @@ pub fn region(world: &World, x0: u32, y0: u32, w: u32, h: u32, px: u32) -> RgbIm
                 continue;
             }
             let t = world.tile(tx, ty);
-            let mut c = base_color(t);
-            if let Some(o) = t.owner {
-                c = lerp(c, NATION_COLORS[o as usize % NATION_COLORS.len()], 0.6);
-            }
-            if t.devastation > 0.04 {
-                c = lerp(c, [70, 22, 22], (t.devastation * 0.7).min(0.7));
-            }
             let bx = rx * px;
             let by = ry * px;
-            fill_block(&mut img, bx, by, px, px, c);
-
+            draw_tile(&mut img, bx, by, px, t);
+            if let Some(o) = t.owner {
+                let nc = NATION_COLORS[o as usize % NATION_COLORS.len()];
+                tint_block(&mut img, bx, by, px, nc, 0.5);
+            }
+            if t.devastation > 0.04 {
+                tint_block(
+                    &mut img,
+                    bx,
+                    by,
+                    px,
+                    [70, 22, 22],
+                    (t.devastation * 0.7).min(0.7),
+                );
+            }
             if let Some(o) = t.owner {
                 draw_borders(&mut img, world, tx, ty, o, (bx, by), px);
             }
@@ -122,6 +128,142 @@ pub fn save_region(world: &World, px: u32, path: &str) -> Result<(u32, u32), Str
         .save_with_format(path, image::ImageFormat::Png)
         .map_err(|e| e.to_string())?;
     Ok((w * px.max(1), h * px.max(1)))
+}
+
+/// Hash déterministe d'un pixel (texture stable d'un rendu à l'autre).
+fn hash2(x: u32, y: u32) -> u32 {
+    let mut h = (x as u64).wrapping_mul(0x9E37_79B1) ^ (y as u64).wrapping_mul(0x85EB_CA77);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h ^= h >> 12;
+    h as u32
+}
+
+/// Dessine la tuile **texturée** (pixel-art) d'une case dans un bloc px×px :
+/// dithering 2-tons + motifs (vaguelettes pour l'océan, canopée pour les forêts).
+fn draw_tile(img: &mut RgbImage, bx: u32, by: u32, px: u32, t: &Tile) {
+    let base = base_color(t);
+    let lo = scale_color(base, 0.82);
+    let hi = scale_color(base, 1.14);
+    let ocean = t.kind == TileKind::Ocean;
+    let forest = matches!(
+        t.biome,
+        Biome::Boreal | Biome::TemperateForest | Biome::TropicalForest
+    );
+    for yy in 0..px {
+        for xx in 0..px {
+            let gx = bx + xx;
+            let gy = by + yy;
+            if gx >= img.width() || gy >= img.height() {
+                continue;
+            }
+            let n = hash2(gx, gy) % 100;
+            let c = if ocean {
+                if (yy + xx / 3) % 4 == 0 {
+                    hi // vaguelette
+                } else if n < 18 {
+                    lo
+                } else {
+                    base
+                }
+            } else if forest {
+                if n < 38 {
+                    lo // feuillage dense
+                } else if n > 88 {
+                    hi
+                } else {
+                    base
+                }
+            } else if n < 22 {
+                lo
+            } else if n > 82 {
+                hi
+            } else {
+                base
+            };
+            img.put_pixel(gx, gy, Rgb(c));
+        }
+    }
+}
+
+/// Mélange tout le bloc vers une couleur (teinte de nation, dévastation…).
+fn tint_block(img: &mut RgbImage, bx: u32, by: u32, px: u32, color: [u8; 3], t: f32) {
+    for y in by..(by + px).min(img.height()) {
+        for x in bx..(bx + px).min(img.width()) {
+            let p = img.get_pixel(x, y).0;
+            img.put_pixel(x, y, Rgb(lerp(p, color, t)));
+        }
+    }
+}
+
+/// Tuile d'exemple (pour la planche de tileset).
+fn sample(kind: TileKind, biome: Biome, elevation: f32) -> Tile {
+    Tile {
+        kind,
+        elevation,
+        ruggedness: 0.3,
+        mean_temperature: 15.0,
+        precipitation: 0.5,
+        biome,
+        vegetation: 0.5,
+        soil_fertility: 0.5,
+        wildlife: 0.3,
+        marine_life: 0.3,
+        temperature: 15.0,
+        precip_now: 0.5,
+        owner: None,
+        population: 0.0,
+        development: 0.0,
+        devastation: 0.0,
+        force: 0.0,
+    }
+}
+
+/// Planche du tileset (asset visuel) : chaque biome/type en patch texturé.
+pub fn tileset_sheet(px: u32) -> RgbImage {
+    use Biome::*;
+    use TileKind::{Land, Ocean as Sea};
+    let samples = [
+        sample(Sea, Ocean, 0.15),
+        sample(Sea, Ocean, 0.45),
+        sample(Land, Grassland, 0.6),
+        sample(Land, TemperateForest, 0.6),
+        sample(Land, TropicalForest, 0.55),
+        sample(Land, Boreal, 0.6),
+        sample(Land, Savanna, 0.6),
+        sample(Land, Desert, 0.6),
+        sample(Land, Tundra, 0.6),
+        sample(Land, Ice, 0.6),
+        sample(Land, Grassland, 0.85), // roche (altitude)
+        sample(Land, Grassland, 0.95), // neige (altitude)
+    ];
+    let px = px.max(4);
+    let patch = 4u32;
+    let cols = 6u32;
+    let cell = patch * px;
+    let gap = 3u32;
+    let rows = (samples.len() as u32).div_ceil(cols);
+    let mut img = RgbImage::new(cols * (cell + gap) + gap, rows * (cell + gap) + gap);
+    for p in img.pixels_mut() {
+        *p = Rgb([18, 18, 22]);
+    }
+    for (i, t) in samples.iter().enumerate() {
+        let cx = (i as u32 % cols) * (cell + gap) + gap;
+        let cy = (i as u32 / cols) * (cell + gap) + gap;
+        for ty in 0..patch {
+            for tx in 0..patch {
+                draw_tile(&mut img, cx + tx * px, cy + ty * px, px, t);
+            }
+        }
+    }
+    img
+}
+
+/// Rend la planche de tileset et la sauvegarde en PNG.
+pub fn save_tileset(px: u32, path: &str) -> Result<(), String> {
+    tileset_sheet(px)
+        .save_with_format(path, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())
 }
 
 fn fill_block(img: &mut RgbImage, bx: u32, by: u32, w: u32, h: u32, c: [u8; 3]) {

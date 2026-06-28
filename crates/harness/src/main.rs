@@ -165,6 +165,12 @@ fn main() {
             Err(e) => eprintln!("échec rendu région: {e}"),
         }
     }
+    if let Some(path) = &args.tileset {
+        match render::save_tileset(args.tileset_scale, path) {
+            Ok(()) => println!("tileset écrit: {path}"),
+            Err(e) => eprintln!("échec tileset: {e}"),
+        }
+    }
 
     print_summary(&world, &actors, args.settle.is_some());
     if args.audit {
@@ -473,6 +479,8 @@ struct Args {
     png_scale: u32,
     region: Option<String>,
     region_scale: u32,
+    tileset: Option<String>,
+    tileset_scale: u32,
 }
 
 impl Args {
@@ -500,6 +508,8 @@ impl Args {
             png_scale: 2,
             region: None,
             region_scale: 10,
+            tileset: None,
+            tileset_scale: 16,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -559,6 +569,12 @@ impl Args {
                 "--region-scale" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
                         a.region_scale = v;
+                    }
+                }
+                "--tileset" => a.tileset = it.next(),
+                "--tileset-scale" => {
+                    if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                        a.tileset_scale = v;
                     }
                 }
                 "--player" => {
