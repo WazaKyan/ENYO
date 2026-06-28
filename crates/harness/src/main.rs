@@ -148,6 +148,10 @@ fn print_summary(world: &World, actors: &[u16], settled: bool) {
         let tech = world.nation(nid).map(|n| n.tech).unwrap_or_default();
         println!("  nation {nid} : {pop:.0} hab, {tiles} cases, {provs} prov., tech {tech:?}");
     }
+    let wars = world.diplomacy.wars();
+    if !wars.is_empty() {
+        println!("  guerres : {wars:?}");
+    }
 }
 
 /// Enregistre la commande, l'applique, et écrit les événements produits.
@@ -185,7 +189,8 @@ fn run_replay(path: &str) {
 fn run_repl(world: &mut World) {
     println!(
         "REPL ENYO. Commandes : step [n] | settle x y [pop] | swarm fx fy tx ty | \
-         research nation branch | inspect x y | capacity x y | nation id | checksum | quit"
+         research nat br | mobilize x y amt | march fx fy tx ty | war a b | peace a b | \
+         inspect x y | capacity x y | nation id | checksum | quit"
     );
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
@@ -224,6 +229,38 @@ fn run_repl(world: &mut World) {
                     to_y: ty,
                 })),
                 _ => println!("coordonnées invalides"),
+            },
+            ["mobilize", x, y, amt] => match (u(x), u(y), u(amt)) {
+                (Some(x), Some(y), Some(a)) => emit(world.apply(Command::Mobilize {
+                    x,
+                    y,
+                    nation: 0,
+                    amount: a,
+                })),
+                _ => println!("arguments invalides"),
+            },
+            ["march", a, b, c, d] => match (u(a), u(b), u(c), u(d)) {
+                (Some(fx), Some(fy), Some(tx), Some(ty)) => emit(world.apply(Command::March {
+                    from_x: fx,
+                    from_y: fy,
+                    to_x: tx,
+                    to_y: ty,
+                })),
+                _ => println!("coordonnées invalides"),
+            },
+            ["war", a, b] => match (u(a), u(b)) {
+                (Some(a), Some(b)) => emit(world.apply(Command::DeclareWar {
+                    nation: a as u16,
+                    target: b as u16,
+                })),
+                _ => println!("arguments invalides"),
+            },
+            ["peace", a, b] => match (u(a), u(b)) {
+                (Some(a), Some(b)) => emit(world.apply(Command::MakePeace {
+                    nation: a as u16,
+                    target: b as u16,
+                })),
+                _ => println!("arguments invalides"),
             },
             ["research", nat, br] => match (u(nat), u(br)) {
                 (Some(nat), Some(br)) => emit(world.apply(Command::Research {

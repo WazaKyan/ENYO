@@ -1,5 +1,6 @@
 //! IA **baseline déterministe** (Phase 4) : des nations non-joueuses qui
-//! s'implantent, recherchent et s'étendent par essaimage.
+//! s'implantent, recherchent, s'étendent — et se font la **guerre** quand le
+//! grief monte (Phase conflit).
 //!
 //! L'IA est PURE : elle observe le monde et renvoie des [`Command`]. Elle ne
 //! modifie jamais l'état directement — `sim` reste sans IA et tout reste
@@ -13,10 +14,13 @@ use sim::nation::{ESSOR, LIEN, TERROIR};
 use sim::tile::TileKind;
 use sim::World;
 
-/// Branches que l'IA fait progresser (Fer = militaire, pas encore utile).
+/// Branches que l'IA fait progresser (Fer = militaire, géré via la mobilisation).
 const AI_BRANCHES: [usize; 3] = [TERROIR, ESSOR, LIEN];
 
-/// Plan d'un tour pour une nation IA : recherche (si abordable) + expansion.
+/// Seuil de grief au-delà duquel l'IA déclare la guerre.
+const WAR_THRESHOLD: f32 = 3.0;
+
+/// Plan d'un tour pour une nation IA : recherche + expansion + diplomatie/guerre.
 pub fn plan(world: &World, nation: u16) -> Vec<Command> {
     let mut cmds = Vec::new();
 
@@ -36,6 +40,35 @@ pub fn plan(world: &World, nation: u16) -> Vec<Command> {
     }
 
     cmds.extend(expansion(world, nation));
+
+    // Diplomatie : déclarer la guerre à la nation la plus haïe (grief élevé).
+    if let Some((target, amount)) = world.diplomacy.top_grievance(nation) {
+        if amount >= WAR_THRESHOLD && !world.diplomacy.at_war(nation, target) {
+            cmds.push(Command::DeclareWar { nation, target });
+        }
+    }
+
+    // Guerre : mobiliser puis attaquer une case frontalière ennemie.
+    if let Some((from, to)) = find_attack(world, nation) {
+        let amount = (world.tiles[from].population * 0.4) as u32;
+        if amount > 0 {
+            let (fx, fy) = coords(from, world.width);
+            let (tx, ty) = coords(to, world.width);
+            cmds.push(Command::Mobilize {
+                x: fx,
+                y: fy,
+                nation,
+                amount,
+            });
+            cmds.push(Command::March {
+                from_x: fx,
+                from_y: fy,
+                to_x: tx,
+                to_y: ty,
+            });
+        }
+    }
+
     cmds
 }
 
@@ -73,8 +106,34 @@ fn expansion(world: &World, nation: u16) -> Vec<Command> {
     cmds
 }
 
+/// Trouve une case (source ≥1000 hab.) frontalière d'une case ennemie en guerre.
+fn find_attack(world: &World, nation: u16) -> Option<(usize, usize)> {
+    let w = world.width as i64;
+    let h = world.height as i64;
+    for (idx, t) in world.tiles.iter().enumerate() {
+        if t.owner != Some(nation) || t.population < 1000.0 {
+            continue;
+        }
+        let x = idx as i64 % w;
+        let y = idx as i64 / w;
+        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+            let nx = (x + dx).rem_euclid(w);
+            let ny = y + dy;
+            if ny < 0 || ny >= h {
+                continue;
+            }
+            let v = (ny * w + nx) as usize;
+            if let Some(m) = world.tiles[v].owner {
+                if m != nation && world.diplomacy.at_war(nation, m) {
+                    return Some((idx, v));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Place `count` nations sur des terres productives bien réparties (déterministe).
-/// Renvoie les commandes `Settle` correspondantes (nations 0..count).
 pub fn spawn_nations(world: &World, count: u16) -> Vec<Command> {
     let mut out = Vec::new();
     if count == 0 {
@@ -107,6 +166,11 @@ pub fn spawn_nations(world: &World, count: u16) -> Vec<Command> {
         });
     }
     out
+}
+
+/// (x, y) d'un index linéaire.
+fn coords(idx: usize, width: u32) -> (u32, u32) {
+    (idx as u32 % width, idx as u32 / width)
 }
 
 /// Distance de Manhattan avec enroulement sur X.

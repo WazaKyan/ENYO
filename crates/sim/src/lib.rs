@@ -1,4 +1,4 @@
-//! Cœur de simulation d'ENYO : le monde (grille de cases + nations) et
+//! Cœur de simulation d'ENYO : le monde (grille + nations + diplomatie) et
 //! l'application des commandes. Pur, déterministe, headless (cf. `CLAUDE.md`).
 //!
 //! L'unique façon de modifier l'état est [`World::apply`], qui transforme une
@@ -7,6 +7,7 @@
 //! seul journal.
 
 pub mod climate;
+pub mod diplo;
 pub mod dynamics;
 pub mod nation;
 pub mod noise;
@@ -16,6 +17,9 @@ pub mod rng;
 pub mod tile;
 pub mod worldgen;
 
+use std::collections::BTreeSet;
+
+use diplo::Diplomacy;
 use nation::Nation;
 use proto::{Command, Event};
 use rng::Rng;
@@ -39,6 +43,7 @@ pub struct World {
     pub land_tiles: u32,
     pub ocean_tiles: u32,
     pub nations: Vec<Nation>,
+    pub diplomacy: Diplomacy,
     rng: Rng,
     pub tiles: Vec<Tile>,
 }
@@ -55,6 +60,7 @@ impl World {
             land_tiles: gen.land,
             ocean_tiles: gen.ocean,
             nations: Vec::new(),
+            diplomacy: Diplomacy::default(),
             rng: Rng::new(seed),
             tiles: gen.tiles,
         }
@@ -63,6 +69,11 @@ impl World {
     /// Index linéaire d'une case (x, y).
     fn index(&self, x: u32, y: u32) -> usize {
         y as usize * self.width as usize + x as usize
+    }
+
+    /// Coordonnées (x, y) d'un index linéaire.
+    fn coords(&self, idx: usize) -> (u32, u32) {
+        (idx as u32 % self.width, idx as u32 / self.width)
     }
 
     /// Référence vers la case (x, y).
@@ -130,6 +141,20 @@ impl World {
                 to_y,
             } => self.swarm(from_x, from_y, to_x, to_y),
             Command::Research { nation, branch } => self.research(nation, branch),
+            Command::Mobilize {
+                x,
+                y,
+                nation,
+                amount,
+            } => self.mobilize(x, y, nation, amount),
+            Command::March {
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+            } => self.march(from_x, from_y, to_x, to_y),
+            Command::DeclareWar { nation, target } => self.declare_war(nation, target),
+            Command::MakePeace { nation, target } => self.make_peace(nation, target),
         }
     }
 
@@ -143,7 +168,7 @@ impl World {
         }
     }
 
-    /// Implante une population de départ (S2 — implantation).
+    /// Implante une population de départ (S2).
     fn settle(&mut self, x: u32, y: u32, nation: u16, population: u32) -> Vec<Event> {
         if x >= self.width || y >= self.height {
             return reject("hors carte");
@@ -191,7 +216,14 @@ impl World {
         }
         if let Some(o) = self.tiles[to].owner {
             if o != nation {
-                return reject("cible possédée par une autre nation");
+                // Essaimage sur une case ennemie : casus belli, pas d'installation.
+                self.diplomacy.add_grievance(nation, o, 1.0);
+                return vec![Event::GrievanceRaised {
+                    from: nation,
+                    to: o,
+                    x: tx,
+                    y: ty,
+                }];
             }
         }
 
@@ -249,7 +281,162 @@ impl World {
         }]
     }
 
-    /// Résout un tour : météo + biosphère, puis dynamiques anthropiques (S1).
+    /// Mobilisation (S5) : convertit de la population en force sur une case possédée.
+    fn mobilize(&mut self, x: u32, y: u32, nation: u16, amount: u32) -> Vec<Event> {
+        if x >= self.width || y >= self.height {
+            return reject("hors carte");
+        }
+        let idx = self.index(x, y);
+        if self.tiles[idx].owner != Some(nation) {
+            return reject("case non possédée");
+        }
+        let t = &mut self.tiles[idx];
+        let m = (amount as f32).min(t.population);
+        if m <= 0.0 {
+            return reject("population insuffisante");
+        }
+        t.population -= m;
+        t.force += m;
+        vec![Event::Mobilized {
+            nation,
+            x,
+            y,
+            amount: m,
+        }]
+    }
+
+    /// Marche / attaque (S5) : déplace toute la force vers une case adjacente.
+    fn march(&mut self, fx: u32, fy: u32, tx: u32, ty: u32) -> Vec<Event> {
+        if fx >= self.width || fy >= self.height || tx >= self.width || ty >= self.height {
+            return reject("hors carte");
+        }
+        if !self.is_adjacent(fx, fy, tx, ty) {
+            return reject("cible non adjacente");
+        }
+        let from = self.index(fx, fy);
+        let to = self.index(tx, ty);
+        let nation = match self.tiles[from].owner {
+            Some(o) => o,
+            None => return reject("source non possédée"),
+        };
+        let force = self.tiles[from].force;
+        if force <= 0.0 {
+            return reject("aucune force à déplacer");
+        }
+        if self.tiles[to].kind != TileKind::Land {
+            return reject("cible aquatique");
+        }
+
+        match self.tiles[to].owner {
+            None => self.move_force(from, to, nation, force),
+            Some(o) if o == nation => self.move_force(from, to, nation, force),
+            Some(defender) => {
+                if !self.diplomacy.at_war(nation, defender) {
+                    return reject("pas en guerre avec la cible");
+                }
+                self.resolve_battle(from, to, nation, defender, force)
+            }
+        }
+    }
+
+    /// Déplacement pacifique de force (case amie ou libre).
+    fn move_force(&mut self, from: usize, to: usize, nation: u16, force: f32) -> Vec<Event> {
+        self.tiles[from].force = 0.0;
+        self.tiles[to].force += force;
+        let (from_x, from_y) = self.coords(from);
+        let (to_x, to_y) = self.coords(to);
+        vec![Event::Marched {
+            nation,
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            force,
+        }]
+    }
+
+    /// Résolution déterministe d'un combat sur la case `to`.
+    fn resolve_battle(
+        &mut self,
+        from: usize,
+        to: usize,
+        attacker: u16,
+        defender: u16,
+        force: f32,
+    ) -> Vec<Event> {
+        let (tx, ty) = self.coords(to);
+        self.tiles[from].force = 0.0; // la force est engagée
+
+        let d_force = self.tiles[to].force;
+        let defense_bonus = self.tiles[to].ruggedness * 30.0 + self.tiles[to].population * 0.2;
+        let resistance = d_force + defense_bonus;
+
+        let conquered;
+        let attacker_losses;
+        let defender_losses;
+        if force > resistance {
+            // Conquête : la résistance est balayée, l'attaquant occupe la case.
+            let remaining = force - resistance;
+            let t = &mut self.tiles[to];
+            t.owner = Some(attacker);
+            t.force = remaining;
+            t.population *= 0.7; // mise à sac
+            t.devastation = (t.devastation + 0.4).clamp(0.0, 1.0);
+            conquered = true;
+            attacker_losses = resistance;
+            defender_losses = d_force;
+        } else {
+            // Repoussé : le bonus de terrain encaisse, puis la force défensive.
+            let force_damage = (force - defense_bonus).max(0.0);
+            let new_force = (d_force - force_damage).max(0.0);
+            let t = &mut self.tiles[to];
+            t.force = new_force;
+            t.devastation = (t.devastation + 0.2).clamp(0.0, 1.0);
+            conquered = false;
+            attacker_losses = force;
+            defender_losses = d_force - new_force;
+        }
+
+        vec![Event::BattleResolved {
+            attacker,
+            defender,
+            x: tx,
+            y: ty,
+            conquered,
+            attacker_losses,
+            defender_losses,
+        }]
+    }
+
+    /// Déclare la guerre (S6).
+    fn declare_war(&mut self, nation: u16, target: u16) -> Vec<Event> {
+        if nation == target {
+            return reject("on ne se déclare pas la guerre à soi-même");
+        }
+        self.diplomacy.set_war(nation, target, true);
+        vec![Event::WarDeclared { nation, target }]
+    }
+
+    /// Fait la paix (S6).
+    fn make_peace(&mut self, nation: u16, target: u16) -> Vec<Event> {
+        if !self.diplomacy.at_war(nation, target) {
+            return reject("pas en guerre");
+        }
+        self.diplomacy.set_war(nation, target, false);
+        vec![Event::PeaceMade { nation, target }]
+    }
+
+    /// (fx,fy) et (tx,ty) sont-elles adjacentes (4-connexité, X enroulé) ?
+    fn is_adjacent(&self, fx: u32, fy: u32, tx: u32, ty: u32) -> bool {
+        let w = self.width as i64;
+        let dxa = (fx as i64 - tx as i64).abs();
+        let dx = dxa.min(w - dxa);
+        let dy = (fy as i64 - ty as i64).abs();
+        dx + dy == 1
+    }
+
+    /// Résout un tour : météo + biosphère, dynamiques anthropiques (S1), puis
+    /// retombée des griefs (S6).
     fn resolve_turn(&mut self) -> Vec<Event> {
         self.turn += 1;
         let month = climate::month_of(self.turn);
@@ -279,8 +466,11 @@ impl World {
             }
         }
 
-        // Passe 2 — anthropique (capacité, population, développement, savoir).
+        // Passe 2 — anthropique (capacité, population, développement, savoir, frontières).
         self.resolve_anthropic();
+
+        // Les griefs retombent lentement.
+        self.diplomacy.decay(0.99);
 
         let count = width as f64 * height as f64;
         let avg_temperature = (temp_sum / count) as f32;
@@ -302,8 +492,7 @@ impl World {
         }]
     }
 
-    /// Dynamiques anthropiques d'un tour (S1). Les deltas dépendent des populations
-    /// du DÉBUT de tour (`old_pop`) pour être indépendants de l'ordre de parcours.
+    /// Dynamiques anthropiques d'un tour (S1) + friction de frontière (S6).
     fn resolve_anthropic(&mut self) {
         if self.nations.is_empty() {
             return;
@@ -312,6 +501,9 @@ impl World {
         let height = self.height;
         let old_pop: Vec<f32> = self.tiles.iter().map(|t| t.population).collect();
         let mut knowledge_gain = vec![0.0f32; self.nations.len()];
+        // BTreeSet (et non HashSet) : ordre d'itération déterministe → griefs
+        // appliqués dans un ordre stable → checksum reproductible.
+        let mut borders: BTreeSet<(u16, u16)> = BTreeSet::new();
 
         for y in 0..height {
             for x in 0..width {
@@ -321,6 +513,24 @@ impl World {
                 if pop <= 0.0 && owner.is_none() {
                     continue;
                 }
+
+                // Friction de frontière : voisin appartenant à une autre nation.
+                if let Some(o) = owner {
+                    for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+                        let nx = (x as i64 + dx).rem_euclid(width as i64);
+                        let ny = y as i64 + dy;
+                        if ny < 0 || ny >= height as i64 {
+                            continue;
+                        }
+                        let v = (ny * width as i64 + nx) as usize;
+                        if let Some(m) = self.tiles[v].owner {
+                            if m != o {
+                                borders.insert((o, m));
+                            }
+                        }
+                    }
+                }
+
                 let ni = owner.and_then(|o| self.nations.iter().position(|n| n.id == o));
                 let terroir = ni
                     .map(|i| self.nations[i].tech[nation::TERROIR])
@@ -340,8 +550,12 @@ impl World {
                 }
             }
         }
+
         for (i, g) in knowledge_gain.iter().enumerate() {
             self.nations[i].knowledge += g;
+        }
+        for (a, b) in borders {
+            self.diplomacy.add_grievance(a, b, 0.1);
         }
     }
 
@@ -360,6 +574,7 @@ impl World {
             fnv_u32(&mut h, t.population.to_bits());
             fnv_u32(&mut h, t.development.to_bits());
             fnv_u32(&mut h, t.devastation.to_bits());
+            fnv_u32(&mut h, t.force.to_bits());
             fnv_u32(&mut h, t.owner.map(|o| o as u32 + 1).unwrap_or(0));
             h ^= match t.kind {
                 TileKind::Ocean => 1,
@@ -374,6 +589,17 @@ impl World {
                 h ^= tier as u64;
                 h = h.wrapping_mul(FNV_PRIME);
             }
+        }
+        for &(a, b) in self.diplomacy.wars() {
+            fnv_u32(&mut h, a as u32);
+            fnv_u32(&mut h, b as u32);
+            h = h.wrapping_mul(FNV_PRIME);
+        }
+        for &(from, to, amount) in self.diplomacy.grievances() {
+            fnv_u32(&mut h, from as u32);
+            fnv_u32(&mut h, to as u32);
+            fnv_u32(&mut h, amount.to_bits());
+            h = h.wrapping_mul(FNV_PRIME);
         }
         h
     }

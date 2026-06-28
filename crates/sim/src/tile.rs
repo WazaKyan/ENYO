@@ -85,4 +85,6 @@ pub struct Tile {
     pub population: f32,
     pub development: f32,
     pub devastation: f32,
+    /// Force militaire stationnée sur la case (système S5).
+    pub force: f32,
 }
