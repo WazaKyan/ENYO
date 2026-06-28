@@ -1,11 +1,12 @@
 //! RNG déterministe (SplitMix64).
 //!
 //! Algorithme fixe, sans dépendance : une graine donnée produit toujours la même
-//! suite, sur toutes les versions. C'est la pierre angulaire du déterminisme
-//! (voir le contrat dans `CLAUDE.md`).
+//! suite. Pierre angulaire du déterminisme (voir le contrat dans `CLAUDE.md`).
+
+use serde::{Deserialize, Serialize};
 
 /// Générateur pseudo-aléatoire déterministe.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rng {
     state: u64,
 }
