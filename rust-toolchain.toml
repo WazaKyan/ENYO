@@ -1,0 +1,3 @@
+# Toolchain Rust épinglée pour la reproductibilité de l'équipe.
+[toolchain]
+channel = "stable"

@@ -1,0 +1,9 @@
+[package]
+name = "sim"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+proto.workspace = true
+serde.workspace = true
+tracing.workspace = true
