@@ -13,6 +13,7 @@
 
 # Logs & artefacts d'exécution (sauvegardes, snapshots de parties)
 /logs/
+/out/
 *.log
 
 # OS

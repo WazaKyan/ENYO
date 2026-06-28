@@ -7,6 +7,14 @@ et essaimer sa civilisation sous l'œil d'une IA « Directeur » invisible.
 - Systèmes de gameplay : [`docs/GAMEPLAY.md`](docs/GAMEPLAY.md)
 - Principes de développement : [`CLAUDE.md`](CLAUDE.md)
 
+## Voir le jeu (le plus simple)
+
+Double-clique **`run.bat`** : il compile, lance une partie (8 nations, Directeur)
+et ouvre les images générées dans `out/` :
+- `monde.png` — la carte du monde (biomes, reliefs, océans) ;
+- `civilisations.png` — zoom sur les nations (villes, frontières, guerres) ;
+- `tileset.png` — les tuiles pixel-art.
+
 ## Prérequis
 
 - **Rust** (toolchain stable), installé via [rustup](https://rustup.rs).
