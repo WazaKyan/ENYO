@@ -1,14 +1,21 @@
-//! Harness CLI : pilote la simulation sans interface graphique.
+//! Harness CLI : pilote la simulation sans interface graphique. Outil principal
+//! d'exécution, de traçage et d'**audit**.
 //!
-//! Usage : `harness [--seed N] [--turns N] [--width N] [--height N]
-//!                  [--settle x,y] [--log f.jsonl] [--snapshot f.json] [--inspect x,y]`
+//! Modes :
+//! - normal : génère un monde, joue des tours, écrit le journal d'événements ET
+//!   un **enregistrement rejouable** des commandes.
+//! - `--replay f.rec.jsonl` : rejoue un enregistrement et vérifie le déterminisme.
+//! - `--load f.json` : reprend depuis un snapshot puis joue `--turns` tours.
+//! - `--repl` : console interactive pour piloter la sim à la main.
 //!
-//! Outil principal d'exécution, de traçage et d'audit. Écrit un journal JSONL
-//! (un événement par ligne) ; chaque événement de tour porte un checksum du monde.
+//! Options : `--seed N --turns N --width N --height N --settle x,y
+//!            --log f.jsonl --rec f.rec.jsonl --snapshot f.json --inspect x,y`
 
-use std::io::Write;
+use std::fs::File;
+use std::io::{self, BufRead, Write};
 
-use proto::Command;
+use persist::{Header, Recorder};
+use proto::{Command, Event};
 use sim::World;
 use tracing_subscriber::EnvFilter;
 
@@ -20,61 +27,67 @@ fn main() {
         .init();
 
     let args = Args::parse();
+
+    // Mode replay : rejoue + vérifie, puis sort.
+    if let Some(path) = &args.replay {
+        run_replay(path);
+        return;
+    }
+
+    // Construit ou recharge le monde.
+    let mut world = match &args.load {
+        Some(snap) => persist::load_snapshot(snap).expect("chargement du snapshot"),
+        None => World::new(args.seed, args.width, args.height),
+    };
     tracing::info!(
-        seed = args.seed,
-        width = args.width,
-        height = args.height,
-        turns = args.turns,
-        "génération du monde"
+        seed = world.seed,
+        width = world.width,
+        height = world.height,
+        turn = world.turn,
+        "monde prêt"
     );
 
-    let mut world = World::new(args.seed, args.width, args.height);
-
-    // Prépare le journal d'événements (audit).
-    if let Some(parent) = std::path::Path::new(&args.log).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).expect("création du dossier de log");
-        }
+    // Mode REPL : console interactive.
+    if args.repl {
+        run_repl(&mut world);
+        return;
     }
-    let mut log_file = std::fs::File::create(&args.log).expect("création du fichier de log");
-    let write_event = |file: &mut std::fs::File, ev: &proto::Event| {
-        let line = serde_json::to_string(ev).expect("sérialisation de l'événement");
-        writeln!(file, "{line}").expect("écriture du log");
+
+    // Mode normal (batch) : journal d'événements + enregistrement des commandes.
+    let mut log = create_file(&args.log);
+    write_line(
+        &mut log,
+        &serde_json::to_string(&world.genesis_event()).unwrap(),
+    );
+
+    let header = Header {
+        seed: world.seed,
+        width: world.width,
+        height: world.height,
     };
+    let mut rec = Recorder::create(&args.rec, &header).expect("création de l'enregistrement");
 
-    // Genèse.
-    let genesis = world.genesis_event();
-    write_event(&mut log_file, &genesis);
-    tracing::info!(?genesis, "monde généré");
-
-    // Implantation de départ (nation 0), à la demande.
     if let Some((x, y)) = args.settle {
-        for ev in world.apply(Command::Settle {
-            x,
-            y,
-            nation: 0,
-            population: 300,
-        }) {
-            tracing::info!(?ev, "implantation");
-            write_event(&mut log_file, &ev);
-        }
+        run_command(
+            &mut world,
+            &mut rec,
+            &mut log,
+            Command::Settle {
+                x,
+                y,
+                nation: 0,
+                population: 300,
+            },
+        );
     }
-
-    // Tours.
     for _ in 0..args.turns {
-        for ev in world.apply(Command::Step) {
-            write_event(&mut log_file, &ev);
-        }
+        run_command(&mut world, &mut rec, &mut log, Command::Step);
     }
 
-    // Snapshot complet (audit profond), à la demande.
     if let Some(path) = &args.snapshot {
-        let json = serde_json::to_string(&world).expect("sérialisation du monde");
-        std::fs::write(path, json).expect("écriture du snapshot");
+        persist::save_snapshot(&world, path).expect("écriture du snapshot");
         tracing::info!(snapshot = %path, "snapshot écrit");
     }
-
-    // Inspection d'une case, à la demande.
     if let Some((x, y)) = args.inspect {
         if x < world.width && y < world.height {
             println!("Case ({x},{y}) = {:#?}", world.tile(x, y));
@@ -83,15 +96,155 @@ fn main() {
         }
     }
 
-    tracing::info!(turn = world.turn, log = %args.log, "simulation terminée");
     println!(
-        "OK — monde {}x{} (terre {} / océan {}), {} tours simulés, journal: {}",
-        world.width, world.height, world.land_tiles, world.ocean_tiles, world.turn, args.log
+        "OK — monde {}x{} (terre {} / océan {}), tour {}, journal {} + rejouable {}",
+        world.width,
+        world.height,
+        world.land_tiles,
+        world.ocean_tiles,
+        world.turn,
+        args.log,
+        args.rec
     );
     if args.settle.is_some() {
         let (pop, tiles) = world.nation_stats(0);
         println!("Nation 0 : {pop:.0} habitants sur {tiles} case(s)");
     }
+}
+
+/// Enregistre la commande, l'applique, et écrit les événements produits.
+fn run_command(world: &mut World, rec: &mut Recorder, log: &mut File, cmd: Command) {
+    rec.record(&cmd).expect("enregistrement de la commande");
+    for ev in world.apply(cmd) {
+        write_line(log, &serde_json::to_string(&ev).unwrap());
+    }
+}
+
+/// Rejoue un enregistrement et vérifie que le replay est déterministe.
+fn run_replay(path: &str) {
+    let (header, commands) = persist::read_recording(path).expect("lecture de l'enregistrement");
+    let (world, events) = persist::replay(&header, &commands);
+    let (world2, _) = persist::replay(&header, &commands);
+    let deterministic = world.checksum() == world2.checksum();
+
+    println!(
+        "Replay « {path} » : {} commandes, tour {}, checksum {}",
+        commands.len(),
+        world.turn,
+        world.checksum()
+    );
+    println!("Déterministe (2 replays identiques) : {deterministic}");
+    let last = events.iter().rev().find_map(|e| match e {
+        Event::TurnResolved { checksum, .. } => Some(*checksum),
+        _ => None,
+    });
+    if let Some(c) = last {
+        println!("Checksum du dernier tour : {c}");
+    }
+    let (pop, tiles) = world.nation_stats(0);
+    if tiles > 0 {
+        println!("Nation 0 : {pop:.0} habitants sur {tiles} case(s)");
+    }
+}
+
+/// Console interactive pour piloter la simulation à la main.
+fn run_repl(world: &mut World) {
+    println!(
+        "REPL ENYO. Commandes : step [n] | settle x y [pop] | swarm fx fy tx ty | \
+         research nation branch | inspect x y | nation id | checksum | quit"
+    );
+    let stdin = io::stdin();
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        // Retire un éventuel BOM (ex. entrée pipée sous Windows).
+        let line = line.trim_start_matches('\u{feff}');
+        let p: Vec<&str> = line.split_whitespace().collect();
+        match p.as_slice() {
+            [] => {}
+            ["quit"] | ["exit"] => break,
+            ["checksum"] => println!("checksum = {}", world.checksum()),
+            ["step"] => emit(world.apply(Command::Step)),
+            ["step", n] => {
+                let n: u32 = n.parse().unwrap_or(1);
+                for _ in 0..n {
+                    world.apply(Command::Step);
+                }
+                println!("-> tour {}", world.turn);
+            }
+            ["settle", x, y] => emit(apply_settle(world, x, y, "300")),
+            ["settle", x, y, pop] => emit(apply_settle(world, x, y, pop)),
+            ["swarm", a, b, c, d] => match (u(a), u(b), u(c), u(d)) {
+                (Some(fx), Some(fy), Some(tx), Some(ty)) => emit(world.apply(Command::Swarm {
+                    from_x: fx,
+                    from_y: fy,
+                    to_x: tx,
+                    to_y: ty,
+                })),
+                _ => println!("coordonnées invalides"),
+            },
+            ["research", nat, br] => match (u(nat), u(br)) {
+                (Some(nat), Some(br)) => emit(world.apply(Command::Research {
+                    nation: nat as u16,
+                    branch: br as u8,
+                })),
+                _ => println!("arguments invalides"),
+            },
+            ["inspect", x, y] => match (u(x), u(y)) {
+                (Some(x), Some(y)) if x < world.width && y < world.height => {
+                    println!("{:#?}", world.tile(x, y))
+                }
+                _ => println!("coordonnées hors limites"),
+            },
+            ["nation", id] => match u(id) {
+                Some(id) => match world.nation(id as u16) {
+                    Some(n) => println!("{n:#?}"),
+                    None => println!("nation {id} inexistante"),
+                },
+                None => println!("id invalide"),
+            },
+            _ => println!("commande inconnue : {line}"),
+        }
+    }
+}
+
+fn apply_settle(world: &mut World, x: &str, y: &str, pop: &str) -> Vec<Event> {
+    match (u(x), u(y), pop.parse::<u32>().ok()) {
+        (Some(x), Some(y), Some(p)) => world.apply(Command::Settle {
+            x,
+            y,
+            nation: 0,
+            population: p,
+        }),
+        _ => vec![Event::CommandRejected {
+            reason: "arguments invalides".into(),
+        }],
+    }
+}
+
+fn emit(events: Vec<Event>) {
+    for e in events {
+        println!("  {e:?}");
+    }
+}
+
+fn u(s: &str) -> Option<u32> {
+    s.parse().ok()
+}
+
+fn create_file(path: &str) -> File {
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok();
+        }
+    }
+    File::create(path).expect("création du fichier")
+}
+
+fn write_line(f: &mut File, s: &str) {
+    writeln!(f, "{s}").expect("écriture");
 }
 
 /// Arguments de la ligne de commande.
@@ -101,67 +254,74 @@ struct Args {
     width: u32,
     height: u32,
     log: String,
+    rec: String,
     snapshot: Option<String>,
     inspect: Option<(u32, u32)>,
     settle: Option<(u32, u32)>,
+    load: Option<String>,
+    replay: Option<String>,
+    repl: bool,
 }
 
 impl Args {
     fn parse() -> Self {
-        let mut seed = 1u64;
-        let mut turns = 12usize;
-        let mut width = 800u32;
-        let mut height = 500u32;
-        let mut log = String::from("logs/run.jsonl");
-        let mut snapshot = None;
-        let mut inspect = None;
-        let mut settle = None;
-
+        let mut a = Args {
+            seed: 1,
+            turns: 12,
+            width: 800,
+            height: 500,
+            log: String::from("logs/run.jsonl"),
+            rec: String::from("logs/run.rec.jsonl"),
+            snapshot: None,
+            inspect: None,
+            settle: None,
+            load: None,
+            replay: None,
+            repl: false,
+        };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
             match arg.as_str() {
                 "--seed" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
-                        seed = v;
+                        a.seed = v;
                     }
                 }
                 "--turns" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
-                        turns = v;
+                        a.turns = v;
                     }
                 }
                 "--width" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
-                        width = v;
+                        a.width = v;
                     }
                 }
                 "--height" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
-                        height = v;
+                        a.height = v;
                     }
                 }
                 "--log" => {
                     if let Some(v) = it.next() {
-                        log = v;
+                        a.log = v;
                     }
                 }
-                "--snapshot" => snapshot = it.next(),
-                "--inspect" => inspect = it.next().and_then(parse_xy),
-                "--settle" => settle = it.next().and_then(parse_xy),
+                "--rec" => {
+                    if let Some(v) = it.next() {
+                        a.rec = v;
+                    }
+                }
+                "--snapshot" => a.snapshot = it.next(),
+                "--inspect" => a.inspect = it.next().and_then(parse_xy),
+                "--settle" => a.settle = it.next().and_then(parse_xy),
+                "--load" => a.load = it.next(),
+                "--replay" => a.replay = it.next(),
+                "--repl" => a.repl = true,
                 other => eprintln!("argument ignoré : {other}"),
             }
         }
-
-        Args {
-            seed,
-            turns,
-            width,
-            height,
-            log,
-            snapshot,
-            inspect,
-            settle,
-        }
+        a
     }
 }
 
