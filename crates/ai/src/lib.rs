@@ -180,3 +180,117 @@ fn distance(x: u32, y: u32, px: u32, py: u32, width: u32) -> i64 {
     let dy = (y as i64 - py as i64).abs();
     dxw + dy
 }
+
+// ---------------------------------------------------------------------------
+// Le DIRECTEUR (Phase 5a, déterministe) — invisible : il biaise les entrées de
+// S1/S6 pour servir l'intérêt du joueur. Le LLM (5b) viendra CHOISIR parmi ces
+// leviers déjà légaux.
+// ---------------------------------------------------------------------------
+
+/// Au-delà de cette domination, on attise une coalition contre le joueur.
+const DOMINANCE_PRESSURE: f32 = 0.10;
+/// Domination écrasante : on ajoute une calamité « naturelle ».
+const DOMINANCE_BLIGHT: f32 = 0.25;
+const DIRECTOR_PRESSURE: u32 = 5;
+const DIRECTOR_BLIGHT: u32 = 25;
+const DIRECTOR_RELIEF: u32 = 30;
+
+/// Indice de Drame : lecture déterministe de l'« intérêt » pour le joueur.
+struct Drama {
+    nations: usize,
+    dominance: f32,
+    struggling: bool,
+    strongest_rival: Option<u16>,
+    player_best_tile: Option<(u32, u32)>,
+    player_worst_tile: Option<(u32, u32)>,
+}
+
+fn assess(world: &World, player: u16) -> Drama {
+    let mut total = 0.0f32;
+    let mut player_pop = 0.0f32;
+    let mut best_other = 0.0f32;
+    let mut strongest_rival = None;
+    for n in &world.nations {
+        let (pop, _) = world.nation_stats(n.id);
+        total += pop;
+        if n.id == player {
+            player_pop = pop;
+        } else if pop > best_other {
+            best_other = pop;
+            strongest_rival = Some(n.id);
+        }
+    }
+    let player_share = if total > 0.0 { player_pop / total } else { 0.0 };
+    let best_other_share = if total > 0.0 { best_other / total } else { 0.0 };
+    let dominance = player_share - best_other_share;
+    let struggling = best_other > 0.0 && player_pop < 0.5 * best_other;
+
+    let mut player_best_tile = None;
+    let mut best_pop = -1.0f32;
+    let mut player_worst_tile = None;
+    let mut worst_dev = -1.0f32;
+    for (idx, t) in world.tiles.iter().enumerate() {
+        if t.owner != Some(player) {
+            continue;
+        }
+        if t.population > best_pop {
+            best_pop = t.population;
+            player_best_tile = Some(coords(idx, world.width));
+        }
+        if t.devastation > worst_dev {
+            worst_dev = t.devastation;
+            player_worst_tile = Some(coords(idx, world.width));
+        }
+    }
+
+    Drama {
+        nations: world.nations.len(),
+        dominance,
+        struggling,
+        strongest_rival,
+        player_best_tile,
+        player_worst_tile,
+    }
+}
+
+/// Le Directeur (déterministe) : oriente la partie pour servir l'intérêt du
+/// `player`, de façon invisible (biais sur S1/S6). Le LLM (5b) ne fera ensuite
+/// que CHOISIR parmi ces leviers déjà légaux et bornés.
+pub fn direct(world: &World, player: u16) -> Vec<Command> {
+    let d = assess(world, player);
+    let mut cmds = Vec::new();
+    if d.nations < 2 {
+        return cmds; // pas de rival : rien à mettre en scène
+    }
+
+    if d.dominance > DOMINANCE_PRESSURE {
+        // Le joueur domine : attiser une coalition (grief d'un rival envers lui).
+        if let Some(rival) = d.strongest_rival {
+            cmds.push(Command::DirectorGrievance {
+                from: rival,
+                to: player,
+                amount: DIRECTOR_PRESSURE,
+            });
+        }
+        // Domination écrasante : une calamité « naturelle » sur sa meilleure case.
+        if d.dominance > DOMINANCE_BLIGHT {
+            if let Some((x, y)) = d.player_best_tile {
+                cmds.push(Command::DirectorBlight {
+                    x,
+                    y,
+                    amount: DIRECTOR_BLIGHT,
+                });
+            }
+        }
+    } else if d.struggling {
+        // Le joueur souffre (probablement injustement) : un salut discret.
+        if let Some((x, y)) = d.player_worst_tile {
+            cmds.push(Command::DirectorWindfall {
+                x,
+                y,
+                amount: DIRECTOR_RELIEF,
+            });
+        }
+    }
+    cmds
+}

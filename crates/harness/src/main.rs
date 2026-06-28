@@ -98,6 +98,12 @@ fn main() {
 
     for _ in 0..args.turns {
         run_command(&mut world, &mut rec, &mut log, Command::Step);
+        // Le Directeur agit au début du tour des non-joueurs.
+        if args.director {
+            for cmd in ai::direct(&world, args.player) {
+                run_command(&mut world, &mut rec, &mut log, cmd);
+            }
+        }
         for &nid in &actors {
             for cmd in ai::plan(&world, nid) {
                 run_command(&mut world, &mut rec, &mut log, cmd);
@@ -340,6 +346,8 @@ struct Args {
     replay: Option<String>,
     repl: bool,
     auto_expand: bool,
+    director: bool,
+    player: u16,
 }
 
 impl Args {
@@ -359,6 +367,8 @@ impl Args {
             replay: None,
             repl: false,
             auto_expand: false,
+            director: false,
+            player: 0,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -405,6 +415,12 @@ impl Args {
                 "--replay" => a.replay = it.next(),
                 "--repl" => a.repl = true,
                 "--auto-expand" => a.auto_expand = true,
+                "--director" => a.director = true,
+                "--player" => {
+                    if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                        a.player = v;
+                    }
+                }
                 other => eprintln!("argument ignoré : {other}"),
             }
         }

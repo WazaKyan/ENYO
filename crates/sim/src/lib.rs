@@ -155,6 +155,16 @@ impl World {
             } => self.march(from_x, from_y, to_x, to_y),
             Command::DeclareWar { nation, target } => self.declare_war(nation, target),
             Command::MakePeace { nation, target } => self.make_peace(nation, target),
+            Command::DirectorGrievance { from, to, amount } => {
+                self.diplomacy.add_grievance(from, to, amount as f32);
+                vec![Event::OpinionNudged {
+                    from,
+                    to,
+                    amount: amount as f32,
+                }]
+            }
+            Command::DirectorBlight { x, y, amount } => self.blight(x, y, amount),
+            Command::DirectorWindfall { x, y, amount } => self.windfall(x, y, amount),
         }
     }
 
@@ -426,6 +436,34 @@ impl World {
         vec![Event::PeaceMade { nation, target }]
     }
 
+    /// [Directeur] Calamité : biaise la case vers la famine (sécheresse + dégâts).
+    fn blight(&mut self, x: u32, y: u32, amount: u32) -> Vec<Event> {
+        if x >= self.width || y >= self.height {
+            return reject("hors carte");
+        }
+        let a = (amount as f32 / 100.0).clamp(0.0, 1.0);
+        let idx = self.index(x, y);
+        let t = &mut self.tiles[idx];
+        t.precipitation = (t.precipitation * (1.0 - a)).max(0.0);
+        t.soil_fertility = (t.soil_fertility * (1.0 - a)).max(0.0);
+        t.devastation = (t.devastation + a).clamp(0.0, 1.0);
+        vec![Event::Blighted { x, y, amount: a }]
+    }
+
+    /// [Directeur] Aubaine : soigne la dévastation et enrichit la case (salut).
+    fn windfall(&mut self, x: u32, y: u32, amount: u32) -> Vec<Event> {
+        if x >= self.width || y >= self.height {
+            return reject("hors carte");
+        }
+        let a = (amount as f32 / 100.0).clamp(0.0, 1.0);
+        let idx = self.index(x, y);
+        let t = &mut self.tiles[idx];
+        t.devastation = (t.devastation - a).max(0.0);
+        t.soil_fertility = (t.soil_fertility + a * 0.5).min(1.0);
+        t.precipitation = (t.precipitation + a * 0.5).min(1.0);
+        vec![Event::Windfall { x, y, amount: a }]
+    }
+
     /// (fx,fy) et (tx,ty) sont-elles adjacentes (4-connexité, X enroulé) ?
     fn is_adjacent(&self, fx: u32, fy: u32, tx: u32, ty: u32) -> bool {
         let w = self.width as i64;
@@ -568,6 +606,8 @@ impl World {
         for t in &self.tiles {
             fnv_u32(&mut h, t.elevation.to_bits());
             fnv_u32(&mut h, t.mean_temperature.to_bits());
+            fnv_u32(&mut h, t.precipitation.to_bits());
+            fnv_u32(&mut h, t.soil_fertility.to_bits());
             fnv_u32(&mut h, t.temperature.to_bits());
             fnv_u32(&mut h, t.precip_now.to_bits());
             fnv_u32(&mut h, t.vegetation.to_bits());

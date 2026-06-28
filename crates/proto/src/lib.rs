@@ -48,6 +48,12 @@ pub enum Command {
     DeclareWar { nation: u16, target: u16 },
     /// Fait la paix avec une autre nation.
     MakePeace { nation: u16, target: u16 },
+    /// [Directeur] Attise un grief (biais d'opinion, S6) pour fabriquer des coalitions.
+    DirectorGrievance { from: u16, to: u16, amount: u32 },
+    /// [Directeur] Calamité localisée (sécheresse/fléau) biaisant une case (S1).
+    DirectorBlight { x: u32, y: u32, amount: u32 },
+    /// [Directeur] Aubaine localisée (bonne récolte) — salut discret (S1).
+    DirectorWindfall { x: u32, y: u32, amount: u32 },
 }
 
 /// Un fait advenu dans la simulation, produit par l'application d'une [`Command`].
@@ -120,6 +126,12 @@ pub enum Event {
     PeaceMade { nation: u16, target: u16 },
     /// Un grief est né (casus belli) — ex. essaimage sur une case ennemie.
     GrievanceRaised { from: u16, to: u16, x: u32, y: u32 },
+    /// [Directeur] Opinion attisée (biais invisible).
+    OpinionNudged { from: u16, to: u16, amount: f32 },
+    /// [Directeur] Une calamité a frappé une case.
+    Blighted { x: u32, y: u32, amount: f32 },
+    /// [Directeur] Une aubaine a béni une case.
+    Windfall { x: u32, y: u32, amount: f32 },
     /// Une commande a été rejetée — logué pour l'audit (rien n'est silencieux).
     CommandRejected { reason: String },
 }
