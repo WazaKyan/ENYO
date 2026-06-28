@@ -1,0 +1,20 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Secrets / variables d'environnement — NE JAMAIS COMMIT
+.env
+.env.local
+*.key
+*.pem
+
+# Claude Code — réglages locaux perso
+.claude/settings.local.json
+
+# Logs & artefacts d'exécution (sauvegardes, snapshots de parties)
+/logs/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
