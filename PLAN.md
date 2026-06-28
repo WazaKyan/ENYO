@@ -239,7 +239,7 @@ Le LLM (DeepSeek) **ne contrôle pas directement les nations ennemies**. C'est u
 
 ## 6. Roadmap par phases
 
-> **Avancement (poussé sur GitHub) :** Phases **0–4 ✅** + **conflit (S5·S6) ✅** + **Directeur déterministe (S7 / Phase 5a) ✅** · à venir : **5b (branchement DeepSeek)**, UI. **39 tests** verts, clippy propre.
+> **Avancement (poussé sur GitHub) :** **Phases 0–5 ✅** — les **7 systèmes** (S1–S7) + **IA baseline** + **Directeur LLM (DeepSeek)**. Reste : UI (Phase 7), profondeur. **43 tests** verts, clippy propre, **audit complet OK** (déterminisme + invariants + replay d'une partie LLM).
 
 - **Phase 0 — Fondations.** Workspace Rust, CI, logging (`tracing`), RNG seedé, harness minimal, contrat de déterminisme + premier test de replay.
 - **Phase 1 — Le monde qui tourne.** Génération procédurale de la grille **800×500** + modèle de case (§4) + boucle de **tour**. Un monde géographique qui évolue.

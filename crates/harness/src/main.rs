@@ -149,6 +149,92 @@ fn main() {
         args.rec
     );
     print_summary(&world, &actors, args.settle.is_some());
+    if args.audit {
+        run_audit(&world);
+    }
+}
+
+/// Audit d'invariants sur l'état final : finitude, bornes, cohérence
+/// propriétaires/nations, + statistiques agrégées.
+fn run_audit(world: &World) {
+    let mut violations = 0u64;
+    let mut owned = 0u64;
+    let mut total_pop = 0.0f64;
+    let mut total_force = 0.0f64;
+    let mut dev_sum = 0.0f64;
+    let mut devast_sum = 0.0f64;
+    let nation_ids: std::collections::HashSet<u16> = world.nations.iter().map(|n| n.id).collect();
+    for t in &world.tiles {
+        let finite = t.temperature.is_finite()
+            && t.population.is_finite()
+            && t.development.is_finite()
+            && t.devastation.is_finite()
+            && t.force.is_finite()
+            && t.vegetation.is_finite()
+            && t.precip_now.is_finite()
+            && t.precipitation.is_finite()
+            && t.soil_fertility.is_finite()
+            && t.mean_temperature.is_finite();
+        if !finite {
+            violations += 1;
+        }
+        if t.population < 0.0 || t.force < 0.0 {
+            violations += 1;
+        }
+        if !(0.0..=1.0).contains(&t.development) {
+            violations += 1;
+        }
+        if !(0.0..=1.0).contains(&t.devastation) {
+            violations += 1;
+        }
+        if !(0.0..=1.0).contains(&t.vegetation) {
+            violations += 1;
+        }
+        if !(0.0..=1.0).contains(&t.precip_now) {
+            violations += 1;
+        }
+        if let Some(o) = t.owner {
+            owned += 1;
+            if !nation_ids.contains(&o) {
+                violations += 1;
+            }
+            total_pop += t.population as f64;
+            total_force += t.force as f64;
+        }
+        dev_sum += t.development as f64;
+        devast_sum += t.devastation as f64;
+    }
+    let n = world.tiles.len() as f64;
+    let provinces = world.provinces();
+    println!("=== AUDIT (tour {}) ===", world.turn);
+    println!(
+        "cases: {} (terre {} / océan {}), possédées: {}",
+        world.tiles.len(),
+        world.land_tiles,
+        world.ocean_tiles,
+        owned
+    );
+    println!(
+        "nations: {}, provinces: {}, guerres: {}",
+        world.nations.len(),
+        provinces.len(),
+        world.diplomacy.wars().len()
+    );
+    println!(
+        "population totale: {:.0}, force totale: {:.0}",
+        total_pop, total_force
+    );
+    println!(
+        "développement moyen: {:.4}, dévastation moyenne: {:.4}",
+        dev_sum / n,
+        devast_sum / n
+    );
+    println!("checksum final: {}", world.checksum());
+    if violations == 0 {
+        println!("INVARIANTS: OK (aucune violation)");
+    } else {
+        println!("INVARIANTS: {violations} VIOLATION(S) !");
+    }
 }
 
 /// Résumé final par nation.
@@ -364,6 +450,7 @@ struct Args {
     director: bool,
     director_llm: bool,
     player: u16,
+    audit: bool,
 }
 
 impl Args {
@@ -386,6 +473,7 @@ impl Args {
             director: false,
             director_llm: false,
             player: 0,
+            audit: false,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -434,6 +522,7 @@ impl Args {
                 "--auto-expand" => a.auto_expand = true,
                 "--director" => a.director = true,
                 "--director-llm" => a.director_llm = true,
+                "--audit" => a.audit = true,
                 "--player" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
                         a.player = v;
