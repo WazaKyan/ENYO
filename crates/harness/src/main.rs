@@ -160,7 +160,7 @@ fn main() {
         }
     }
     if let Some(path) = &args.region {
-        match render::save_region(&world, args.region_scale, path) {
+        match render::save_region(&world, args.player, args.region_scale, path) {
             Ok((w, h)) => println!("vue région écrite: {path} ({w}x{h} px)"),
             Err(e) => eprintln!("échec rendu région: {e}"),
         }

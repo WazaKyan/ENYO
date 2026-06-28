@@ -139,7 +139,9 @@ pub fn spawn_nations(world: &World, count: u16) -> Vec<Command> {
     if count == 0 {
         return out;
     }
-    const MIN_DIST: i64 = 15;
+    // Distance min calculée pour répartir les nations en 2D sur la carte.
+    let span = world.width.min(world.height) as f32;
+    let min_dist = (span / (2.0 * (count as f32).sqrt())).max(10.0) as i64;
     let mut placed: Vec<(u32, u32)> = Vec::new();
     'scan: for y in (0..world.height).step_by(5) {
         for x in (0..world.width).step_by(5) {
@@ -148,7 +150,7 @@ pub fn spawn_nations(world: &World, count: u16) -> Vec<Command> {
             }
             if placed
                 .iter()
-                .all(|&(px, py)| distance(x, y, px, py, world.width) >= MIN_DIST)
+                .all(|&(px, py)| distance(x, y, px, py, world.width) >= min_dist)
             {
                 placed.push((x, y));
                 if placed.len() == count as usize {

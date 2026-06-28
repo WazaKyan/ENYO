@@ -41,6 +41,31 @@ pub fn overview(world: &World, scale: u32) -> RgbImage {
             }
         }
     }
+
+    // Marqueurs de villes : repérables même à petite échelle.
+    let m = (scale + 1).max(3);
+    for ty in 0..world.height {
+        for tx in 0..world.width {
+            let t = world.tile(tx, ty);
+            if let Some(o) = t.owner {
+                let urban = t.development.max(t.population / 4000.0);
+                if urban > 0.3 {
+                    let nc = NATION_COLORS[o as usize % NATION_COLORS.len()];
+                    let bright = lerp(nc, [255, 250, 230], 0.3);
+                    let (px0, py0) = (tx * scale, ty * scale);
+                    fill_block(&mut img, px0, py0, m, m, [20, 18, 16]);
+                    fill_block(
+                        &mut img,
+                        px0 + 1,
+                        py0 + 1,
+                        m.saturating_sub(2),
+                        m.saturating_sub(2),
+                        bright,
+                    );
+                }
+            }
+        }
+    }
     img
 }
 
@@ -121,9 +146,34 @@ pub fn region(world: &World, x0: u32, y0: u32, w: u32, h: u32, px: u32) -> RgbIm
     img
 }
 
-/// Rend la région englobant les nations et la sauvegarde en PNG.
-pub fn save_region(world: &World, px: u32, path: &str) -> Result<(u32, u32), String> {
-    let (x0, y0, w, h) = nations_bbox(world, 8).ok_or("aucune nation à cadrer")?;
+/// Boîte englobante des cases d'UNE nation (+ marge).
+pub fn nation_bbox(world: &World, nation: u16, pad: u32) -> Option<(u32, u32, u32, u32)> {
+    let (mut minx, mut miny, mut maxx, mut maxy) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    let mut any = false;
+    for (idx, t) in world.tiles.iter().enumerate() {
+        if t.owner == Some(nation) {
+            any = true;
+            let x = idx as u32 % world.width;
+            let y = idx as u32 / world.width;
+            minx = minx.min(x);
+            miny = miny.min(y);
+            maxx = maxx.max(x);
+            maxy = maxy.max(y);
+        }
+    }
+    if !any {
+        return None;
+    }
+    let x0 = minx.saturating_sub(pad);
+    let y0 = miny.saturating_sub(pad);
+    let x1 = (maxx + pad).min(world.width - 1);
+    let y1 = (maxy + pad).min(world.height - 1);
+    Some((x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+}
+
+/// Rend la région d'UNE nation (zoom serré) et la sauvegarde en PNG.
+pub fn save_region(world: &World, nation: u16, px: u32, path: &str) -> Result<(u32, u32), String> {
+    let (x0, y0, w, h) = nation_bbox(world, nation, 6).ok_or("nation introuvable")?;
     region(world, x0, y0, w, h, px.max(1))
         .save_with_format(path, image::ImageFormat::Png)
         .map_err(|e| e.to_string())?;
@@ -139,49 +189,120 @@ fn hash2(x: u32, y: u32) -> u32 {
     h as u32
 }
 
-/// Dessine la tuile **texturée** (pixel-art) d'une case dans un bloc px×px :
-/// dithering 2-tons + motifs (vaguelettes pour l'océan, canopée pour les forêts).
+/// Dessine la tuile pixel-art d'une case : fond ditheré + motifs (arbres, dunes,
+/// touffes d'herbe, pics de montagne, vaguelettes).
 fn draw_tile(img: &mut RgbImage, bx: u32, by: u32, px: u32, t: &Tile) {
     let base = base_color(t);
-    let lo = scale_color(base, 0.82);
-    let hi = scale_color(base, 1.14);
-    let ocean = t.kind == TileKind::Ocean;
-    let forest = matches!(
-        t.biome,
-        Biome::Boreal | Biome::TemperateForest | Biome::TropicalForest
-    );
+    let lo = scale_color(base, 0.84);
+    let hi = scale_color(base, 1.13);
+
+    // Fond ditheré.
     for yy in 0..px {
         for xx in 0..px {
-            let gx = bx + xx;
-            let gy = by + yy;
-            if gx >= img.width() || gy >= img.height() {
-                continue;
-            }
-            let n = hash2(gx, gy) % 100;
-            let c = if ocean {
+            let n = hash2(bx + xx, by + yy) % 100;
+            let c = if t.kind == TileKind::Ocean {
                 if (yy + xx / 3) % 4 == 0 {
-                    hi // vaguelette
-                } else if n < 18 {
+                    hi
+                } else if n < 16 {
                     lo
                 } else {
                     base
                 }
-            } else if forest {
-                if n < 38 {
-                    lo // feuillage dense
-                } else if n > 88 {
-                    hi
-                } else {
-                    base
-                }
-            } else if n < 22 {
+            } else if n < 20 {
                 lo
-            } else if n > 82 {
+            } else if n > 84 {
                 hi
             } else {
                 base
             };
-            img.put_pixel(gx, gy, Rgb(c));
+            put(img, bx + xx, by + yy, c);
+        }
+    }
+
+    if t.kind == TileKind::Ocean {
+        return;
+    }
+    // Montagne : un pic remplace les motifs de biome.
+    if t.elevation > 0.8 {
+        draw_peak(img, bx, by, px, t.elevation);
+        return;
+    }
+    match t.biome {
+        Biome::Boreal | Biome::TemperateForest | Biome::TropicalForest => {
+            let dark = scale_color(base, 0.62);
+            let light = scale_color(base, 1.2);
+            for k in 0..(2 + px / 6) {
+                let h = hash2(bx + k * 7 + 1, by + k * 13 + 1);
+                let ox = bx + h % px.saturating_sub(2).max(1);
+                let oy = by + (h >> 9) % px.saturating_sub(3).max(1);
+                draw_tree(img, ox, oy, dark, light);
+            }
+        }
+        Biome::Desert | Biome::Savanna => {
+            let light = scale_color(base, 1.18);
+            for k in 0..2 {
+                let h = hash2(bx + k * 11 + 3, by + k * 5 + 3);
+                let ox = bx + h % px.saturating_sub(3).max(1);
+                let oy = by + (h >> 9) % px.max(1);
+                put(img, ox, oy, light);
+                put(img, ox + 1, oy, light);
+                put(img, ox + 2, oy, light);
+            }
+        }
+        Biome::Grassland => {
+            let dark = scale_color(base, 0.7);
+            for k in 0..3 {
+                let h = hash2(bx + k * 9 + 2, by + k * 6 + 2);
+                let ox = bx + h % px.max(1);
+                let oy = by + (h >> 9) % px.saturating_sub(1).max(1);
+                put(img, ox, oy, dark);
+                put(img, ox, oy + 1, dark);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Pose un pixel (borné à l'image).
+fn put(img: &mut RgbImage, x: u32, y: u32, c: [u8; 3]) {
+    if x < img.width() && y < img.height() {
+        img.put_pixel(x, y, Rgb(c));
+    }
+}
+
+/// Petit arbre pixel-art : canopée 2×2 + tronc.
+fn draw_tree(img: &mut RgbImage, ox: u32, oy: u32, dark: [u8; 3], light: [u8; 3]) {
+    put(img, ox, oy, dark);
+    put(img, ox + 1, oy, light);
+    put(img, ox, oy + 1, dark);
+    put(img, ox + 1, oy + 1, dark);
+    put(img, ox + 1, oy + 2, [70, 46, 28]); // tronc
+}
+
+/// Pic de montagne : triangle clair, neige au sommet en haute altitude.
+fn draw_peak(img: &mut RgbImage, bx: u32, by: u32, px: u32, elevation: f32) {
+    let rock = [124, 116, 108];
+    let lightr = [176, 168, 158];
+    let snow = [238, 240, 244];
+    let cx = bx + px / 2;
+    let rows = (px / 2).max(2);
+    let top = by + px.saturating_sub(rows);
+    for r in 0..rows {
+        let y = top + r;
+        for d in 0..=r {
+            let shade = if r < 2 {
+                if elevation > 0.88 {
+                    snow
+                } else {
+                    lightr
+                }
+            } else if d == r {
+                lightr
+            } else {
+                rock
+            };
+            put(img, cx.saturating_sub(d), y, shade);
+            put(img, cx + d, y, shade);
         }
     }
 }
