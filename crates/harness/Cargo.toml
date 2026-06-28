@@ -8,6 +8,7 @@ proto.workspace = true
 sim.workspace = true
 persist.workspace = true
 ai.workspace = true
+llm.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

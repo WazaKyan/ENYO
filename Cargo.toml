@@ -1,7 +1,7 @@
 # Workspace Cargo d'ENYO. Les crates vivent dans crates/.
 [workspace]
 resolver = "2"
-members = ["crates/proto", "crates/sim", "crates/persist", "crates/ai", "crates/harness"]
+members = ["crates/proto", "crates/sim", "crates/persist", "crates/ai", "crates/llm", "crates/harness"]
 
 # Métadonnées partagées par toutes les crates (héritées via `.workspace = true`).
 [workspace.package]
@@ -18,3 +18,4 @@ proto = { path = "crates/proto" }
 sim = { path = "crates/sim" }
 persist = { path = "crates/persist" }
 ai = { path = "crates/ai" }
+llm = { path = "crates/llm" }

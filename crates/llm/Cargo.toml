@@ -1,0 +1,14 @@
+[package]
+name = "llm"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+proto.workspace = true
+sim.workspace = true
+ai.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+# Appel HTTPS délégué à `curl` (présent sous Windows 10+/Linux/macOS) : évite les
+# dépendances TLS Rust (windows-sys/ring) qui ne compilent pas sur la toolchain GNU.

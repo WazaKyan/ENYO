@@ -96,10 +96,25 @@ fn main() {
         vec![]
     };
 
+    // Client LLM (DeepSeek) si --director-llm ; None => Directeur déterministe.
+    let llm_client = if args.director_llm {
+        let c = llm::DeepSeek::from_env();
+        if c.is_none() {
+            tracing::warn!("--director-llm sans DEEPSEEK_API_KEY — Directeur déterministe");
+        }
+        c
+    } else {
+        None
+    };
+
     for _ in 0..args.turns {
         run_command(&mut world, &mut rec, &mut log, Command::Step);
         // Le Directeur agit au début du tour des non-joueurs.
-        if args.director {
+        if args.director_llm {
+            for cmd in llm::direct(&world, args.player, llm_client.as_ref()) {
+                run_command(&mut world, &mut rec, &mut log, cmd);
+            }
+        } else if args.director {
             for cmd in ai::direct(&world, args.player) {
                 run_command(&mut world, &mut rec, &mut log, cmd);
             }
@@ -347,6 +362,7 @@ struct Args {
     repl: bool,
     auto_expand: bool,
     director: bool,
+    director_llm: bool,
     player: u16,
 }
 
@@ -368,6 +384,7 @@ impl Args {
             repl: false,
             auto_expand: false,
             director: false,
+            director_llm: false,
             player: 0,
         };
         let mut it = std::env::args().skip(1);
@@ -416,6 +433,7 @@ impl Args {
                 "--repl" => a.repl = true,
                 "--auto-expand" => a.auto_expand = true,
                 "--director" => a.director = true,
+                "--director-llm" => a.director_llm = true,
                 "--player" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
                         a.player = v;
