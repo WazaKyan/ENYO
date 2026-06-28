@@ -16,6 +16,7 @@ use std::io::{self, BufRead, Write};
 
 use persist::{Header, Recorder};
 use proto::{Command, Event};
+use sim::tile::TileKind;
 use sim::World;
 use tracing_subscriber::EnvFilter;
 
@@ -82,6 +83,11 @@ fn main() {
     }
     for _ in 0..args.turns {
         run_command(&mut world, &mut rec, &mut log, Command::Step);
+        if args.auto_expand {
+            for cmd in auto_expansion(&world, 0) {
+                run_command(&mut world, &mut rec, &mut log, cmd);
+            }
+        }
     }
 
     if let Some(path) = &args.snapshot {
@@ -108,7 +114,8 @@ fn main() {
     );
     if args.settle.is_some() {
         let (pop, tiles) = world.nation_stats(0);
-        println!("Nation 0 : {pop:.0} habitants sur {tiles} case(s)");
+        let provinces = world.provinces().iter().filter(|p| p.owner == 0).count();
+        println!("Nation 0 : {pop:.0} habitants sur {tiles} case(s), {provinces} province(s)");
     }
 }
 
@@ -151,7 +158,7 @@ fn run_replay(path: &str) {
 fn run_repl(world: &mut World) {
     println!(
         "REPL ENYO. Commandes : step [n] | settle x y [pop] | swarm fx fy tx ty | \
-         research nation branch | inspect x y | nation id | checksum | quit"
+         research nation branch | inspect x y | capacity x y | nation id | checksum | quit"
     );
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
@@ -166,6 +173,12 @@ fn run_repl(world: &mut World) {
             [] => {}
             ["quit"] | ["exit"] => break,
             ["checksum"] => println!("checksum = {}", world.checksum()),
+            ["capacity", x, y] => match (u(x), u(y)) {
+                (Some(x), Some(y)) if x < world.width && y < world.height => {
+                    println!("capacité ({x},{y}) = {:.0}", world.capacity_at(x, y))
+                }
+                _ => println!("coordonnées hors limites"),
+            },
             ["step"] => emit(world.apply(Command::Step)),
             ["step", n] => {
                 let n: u32 = n.parse().unwrap_or(1);
@@ -261,6 +274,7 @@ struct Args {
     load: Option<String>,
     replay: Option<String>,
     repl: bool,
+    auto_expand: bool,
 }
 
 impl Args {
@@ -278,6 +292,7 @@ impl Args {
             load: None,
             replay: None,
             repl: false,
+            auto_expand: false,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -318,11 +333,48 @@ impl Args {
                 "--load" => a.load = it.next(),
                 "--replay" => a.replay = it.next(),
                 "--repl" => a.repl = true,
+                "--auto-expand" => a.auto_expand = true,
                 other => eprintln!("argument ignoré : {other}"),
             }
         }
         a
     }
+}
+
+/// Driver de démo : pour chaque case de `nation` à >=1000 hab., essaime vers une
+/// case de terre adjacente libre (déduplique les cibles ; une par source/tour).
+fn auto_expansion(world: &World, nation: u16) -> Vec<Command> {
+    use std::collections::HashSet;
+    let w = world.width as i64;
+    let h = world.height as i64;
+    let mut cmds = Vec::new();
+    let mut targeted: HashSet<usize> = HashSet::new();
+    for (idx, t) in world.tiles.iter().enumerate() {
+        if t.owner != Some(nation) || t.population < 1000.0 {
+            continue;
+        }
+        let x = idx as i64 % w;
+        let y = idx as i64 / w;
+        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+            let nx = (x + dx).rem_euclid(w);
+            let ny = y + dy;
+            if ny < 0 || ny >= h {
+                continue;
+            }
+            let v = (ny * w + nx) as usize;
+            let nt = &world.tiles[v];
+            if nt.kind == TileKind::Land && nt.owner.is_none() && targeted.insert(v) {
+                cmds.push(Command::Swarm {
+                    from_x: x as u32,
+                    from_y: y as u32,
+                    to_x: nx as u32,
+                    to_y: ny as u32,
+                });
+                break;
+            }
+        }
+    }
+    cmds
 }
 
 /// Parse une coordonnée "x,y".

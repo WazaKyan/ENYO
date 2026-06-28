@@ -11,7 +11,7 @@ use crate::tile::{Tile, TileKind};
 pub const MAX_POP_PER_TILE: f32 = 5000.0;
 
 /// Taux de croissance mensuel de base (logistique).
-const GROWTH_RATE: f32 = 0.05;
+const GROWTH_RATE: f32 = 0.08;
 
 /// Capacité de charge d'une case, dérivée du terrain + développement + tech Terroir.
 /// Fonction PURE (jamais stockée) — l'unique source de vérité du plafond.

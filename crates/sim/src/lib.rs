@@ -11,6 +11,7 @@ pub mod dynamics;
 pub mod nation;
 pub mod noise;
 pub mod path;
+pub mod province;
 pub mod rng;
 pub mod tile;
 pub mod worldgen;
@@ -82,6 +83,18 @@ impl World {
             }
         }
         (pop, tiles)
+    }
+
+    /// Capacité de charge actuelle d'une case (fonction pure, jamais stockée).
+    pub fn capacity_at(&self, x: u32, y: u32) -> f32 {
+        let idx = self.index(x, y);
+        let t = &self.tiles[idx];
+        let terroir = t
+            .owner
+            .and_then(|o| self.nation(o))
+            .map(|n| n.tech[nation::TERROIR])
+            .unwrap_or(0);
+        dynamics::carrying_capacity(t, terroir)
     }
 
     /// Événement de genèse (audit) : résumé du monde + checksum.
