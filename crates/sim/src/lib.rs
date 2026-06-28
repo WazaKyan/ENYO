@@ -379,8 +379,9 @@ impl World {
     }
 }
 
-/// Coût en savoir pour passer du palier `tier` au suivant.
-fn tech_cost(tier: u8) -> f32 {
+/// Coût en savoir pour passer du palier `tier` au suivant. Public : utilisé par
+/// la crate `ai` pour décider quand chercher.
+pub fn tech_cost(tier: u8) -> f32 {
     25.0 * (tier as f32 + 1.0)
 }
 

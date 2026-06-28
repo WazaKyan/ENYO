@@ -1,0 +1,8 @@
+[package]
+name = "ai"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+proto.workspace = true
+sim.workspace = true

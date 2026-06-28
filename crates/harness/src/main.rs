@@ -4,19 +4,20 @@
 //! Modes :
 //! - normal : génère un monde, joue des tours, écrit le journal d'événements ET
 //!   un **enregistrement rejouable** des commandes.
+//! - `--nations N` : bac à sable — N nations IA s'implantent et s'étendent.
+//! - `--settle x,y [--auto-expand]` : démo une nation (joueur 0).
 //! - `--replay f.rec.jsonl` : rejoue un enregistrement et vérifie le déterminisme.
 //! - `--load f.json` : reprend depuis un snapshot puis joue `--turns` tours.
 //! - `--repl` : console interactive pour piloter la sim à la main.
 //!
-//! Options : `--seed N --turns N --width N --height N --settle x,y
-//!            --log f.jsonl --rec f.rec.jsonl --snapshot f.json --inspect x,y`
+//! Options : `--seed N --turns N --width N --height N --log f --rec f
+//!            --snapshot f --inspect x,y`
 
 use std::fs::File;
 use std::io::{self, BufRead, Write};
 
 use persist::{Header, Recorder};
 use proto::{Command, Event};
-use sim::tile::TileKind;
 use sim::World;
 use tracing_subscriber::EnvFilter;
 
@@ -68,7 +69,13 @@ fn main() {
     };
     let mut rec = Recorder::create(&args.rec, &header).expect("création de l'enregistrement");
 
-    if let Some((x, y)) = args.settle {
+    // Acteurs IA : --nations N (bac à sable) OU une nation 0 si --settle + --auto-expand.
+    let actors: Vec<u16> = if args.nations > 0 {
+        for cmd in ai::spawn_nations(&world, args.nations) {
+            run_command(&mut world, &mut rec, &mut log, cmd);
+        }
+        (0..args.nations).collect()
+    } else if let Some((x, y)) = args.settle {
         run_command(
             &mut world,
             &mut rec,
@@ -80,11 +87,19 @@ fn main() {
                 population: 300,
             },
         );
-    }
+        if args.auto_expand {
+            vec![0]
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
     for _ in 0..args.turns {
         run_command(&mut world, &mut rec, &mut log, Command::Step);
-        if args.auto_expand {
-            for cmd in auto_expansion(&world, 0) {
+        for &nid in &actors {
+            for cmd in ai::plan(&world, nid) {
                 run_command(&mut world, &mut rec, &mut log, cmd);
             }
         }
@@ -112,10 +127,26 @@ fn main() {
         args.log,
         args.rec
     );
-    if args.settle.is_some() {
-        let (pop, tiles) = world.nation_stats(0);
-        let provinces = world.provinces().iter().filter(|p| p.owner == 0).count();
-        println!("Nation 0 : {pop:.0} habitants sur {tiles} case(s), {provinces} province(s)");
+    print_summary(&world, &actors, args.settle.is_some());
+}
+
+/// Résumé final par nation.
+fn print_summary(world: &World, actors: &[u16], settled: bool) {
+    if actors.is_empty() && !settled {
+        return;
+    }
+    let provinces = world.provinces();
+    let ids: Vec<u16> = if actors.is_empty() {
+        vec![0]
+    } else {
+        actors.to_vec()
+    };
+    println!("{} nation(s) :", ids.len());
+    for nid in ids {
+        let (pop, tiles) = world.nation_stats(nid);
+        let provs = provinces.iter().filter(|p| p.owner == nid).count();
+        let tech = world.nation(nid).map(|n| n.tech).unwrap_or_default();
+        println!("  nation {nid} : {pop:.0} hab, {tiles} cases, {provs} prov., tech {tech:?}");
     }
 }
 
@@ -147,10 +178,6 @@ fn run_replay(path: &str) {
     });
     if let Some(c) = last {
         println!("Checksum du dernier tour : {c}");
-    }
-    let (pop, tiles) = world.nation_stats(0);
-    if tiles > 0 {
-        println!("Nation 0 : {pop:.0} habitants sur {tiles} case(s)");
     }
 }
 
@@ -266,6 +293,7 @@ struct Args {
     turns: usize,
     width: u32,
     height: u32,
+    nations: u16,
     log: String,
     rec: String,
     snapshot: Option<String>,
@@ -284,6 +312,7 @@ impl Args {
             turns: 12,
             width: 800,
             height: 500,
+            nations: 0,
             log: String::from("logs/run.jsonl"),
             rec: String::from("logs/run.rec.jsonl"),
             snapshot: None,
@@ -317,6 +346,11 @@ impl Args {
                         a.height = v;
                     }
                 }
+                "--nations" => {
+                    if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                        a.nations = v;
+                    }
+                }
                 "--log" => {
                     if let Some(v) = it.next() {
                         a.log = v;
@@ -339,42 +373,6 @@ impl Args {
         }
         a
     }
-}
-
-/// Driver de démo : pour chaque case de `nation` à >=1000 hab., essaime vers une
-/// case de terre adjacente libre (déduplique les cibles ; une par source/tour).
-fn auto_expansion(world: &World, nation: u16) -> Vec<Command> {
-    use std::collections::HashSet;
-    let w = world.width as i64;
-    let h = world.height as i64;
-    let mut cmds = Vec::new();
-    let mut targeted: HashSet<usize> = HashSet::new();
-    for (idx, t) in world.tiles.iter().enumerate() {
-        if t.owner != Some(nation) || t.population < 1000.0 {
-            continue;
-        }
-        let x = idx as i64 % w;
-        let y = idx as i64 / w;
-        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
-            let nx = (x + dx).rem_euclid(w);
-            let ny = y + dy;
-            if ny < 0 || ny >= h {
-                continue;
-            }
-            let v = (ny * w + nx) as usize;
-            let nt = &world.tiles[v];
-            if nt.kind == TileKind::Land && nt.owner.is_none() && targeted.insert(v) {
-                cmds.push(Command::Swarm {
-                    from_x: x as u32,
-                    from_y: y as u32,
-                    to_x: nx as u32,
-                    to_y: ny as u32,
-                });
-                break;
-            }
-        }
-    }
-    cmds
 }
 
 /// Parse une coordonnée "x,y".
