@@ -148,6 +148,24 @@ fn main() {
         args.log,
         args.rec
     );
+    if let Some(path) = &args.png {
+        let s = args.png_scale.max(1);
+        match render::save_overview(&world, s, path) {
+            Ok(()) => println!(
+                "image écrite: {path} ({}x{} px)",
+                world.width * s,
+                world.height * s
+            ),
+            Err(e) => eprintln!("échec rendu PNG: {e}"),
+        }
+    }
+    if let Some(path) = &args.region {
+        match render::save_region(&world, args.region_scale, path) {
+            Ok((w, h)) => println!("vue région écrite: {path} ({w}x{h} px)"),
+            Err(e) => eprintln!("échec rendu région: {e}"),
+        }
+    }
+
     print_summary(&world, &actors, args.settle.is_some());
     if args.audit {
         run_audit(&world);
@@ -451,6 +469,10 @@ struct Args {
     director_llm: bool,
     player: u16,
     audit: bool,
+    png: Option<String>,
+    png_scale: u32,
+    region: Option<String>,
+    region_scale: u32,
 }
 
 impl Args {
@@ -474,6 +496,10 @@ impl Args {
             director_llm: false,
             player: 0,
             audit: false,
+            png: None,
+            png_scale: 2,
+            region: None,
+            region_scale: 10,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -523,6 +549,18 @@ impl Args {
                 "--director" => a.director = true,
                 "--director-llm" => a.director_llm = true,
                 "--audit" => a.audit = true,
+                "--png" => a.png = it.next(),
+                "--png-scale" => {
+                    if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                        a.png_scale = v;
+                    }
+                }
+                "--region" => a.region = it.next(),
+                "--region-scale" => {
+                    if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                        a.region_scale = v;
+                    }
+                }
                 "--player" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
                         a.player = v;
