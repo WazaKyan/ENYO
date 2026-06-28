@@ -109,7 +109,13 @@ impl World {
         let avg_vegetation = (veg_sum / count) as f32;
         let checksum = self.checksum();
 
-        tracing::debug!(turn = self.turn, month, avg_temperature, avg_vegetation, "tour résolu");
+        tracing::debug!(
+            turn = self.turn,
+            month,
+            avg_temperature,
+            avg_vegetation,
+            "tour résolu"
+        );
 
         vec![Event::TurnResolved {
             turn: self.turn,

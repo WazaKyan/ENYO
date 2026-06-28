@@ -57,7 +57,11 @@ pub fn generate(seed: u64, width: u32, height: u32) -> GenOutcome {
             } else {
                 0.0
             };
-            let wildlife = if kind == TileKind::Land { veg_target } else { 0.0 };
+            let wildlife = if kind == TileKind::Land {
+                veg_target
+            } else {
+                0.0
+            };
             let marine_life = if kind == TileKind::Ocean {
                 ((1.0 - lat) * 0.5 + 0.5 * (elevation / SEA_LEVEL).min(1.0)).clamp(0.0, 1.0)
             } else {

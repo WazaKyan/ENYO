@@ -5,14 +5,14 @@
 use serde::{Deserialize, Serialize};
 
 /// Nature de la case. (Phase 1 : terre ou océan ; lacs/côtes viendront plus tard.)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TileKind {
     Ocean,
     Land,
 }
 
 /// Biome dérivé du climat (classification de type Whittaker, simplifiée).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Biome {
     Ocean,
     Ice,
@@ -26,7 +26,7 @@ pub enum Biome {
 }
 
 /// Saison, dérivée du mois.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Season {
     Winter,
     Spring,

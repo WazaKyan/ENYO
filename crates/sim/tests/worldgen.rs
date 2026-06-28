@@ -38,5 +38,8 @@ fn x_wraps_seamlessly() {
         let right = w.tile(w.width - 1, y).elevation;
         max_jump = max_jump.max((left - right).abs());
     }
-    assert!(max_jump < 0.25, "discontinuité au raccord est-ouest: {max_jump}");
+    assert!(
+        max_jump < 0.25,
+        "discontinuité au raccord est-ouest: {max_jump}"
+    );
 }
