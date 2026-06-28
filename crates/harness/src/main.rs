@@ -1,10 +1,10 @@
 //! Harness CLI : pilote la simulation sans interface graphique.
 //!
 //! Usage : `harness [--seed N] [--turns N] [--width N] [--height N]
-//!                  [--log chemin.jsonl] [--snapshot chemin.json] [--inspect x,y]`
+//!                  [--settle x,y] [--log f.jsonl] [--snapshot f.json] [--inspect x,y]`
 //!
 //! Outil principal d'exécution, de traçage et d'audit. Écrit un journal JSONL
-//! (un événement par ligne) ; chaque événement porte un checksum du monde.
+//! (un événement par ligne) ; chaque événement de tour porte un checksum du monde.
 
 use std::io::Write;
 
@@ -47,6 +47,19 @@ fn main() {
     write_event(&mut log_file, &genesis);
     tracing::info!(?genesis, "monde généré");
 
+    // Implantation de départ (nation 0), à la demande.
+    if let Some((x, y)) = args.settle {
+        for ev in world.apply(Command::Settle {
+            x,
+            y,
+            nation: 0,
+            population: 300,
+        }) {
+            tracing::info!(?ev, "implantation");
+            write_event(&mut log_file, &ev);
+        }
+    }
+
     // Tours.
     for _ in 0..args.turns {
         for ev in world.apply(Command::Step) {
@@ -75,6 +88,10 @@ fn main() {
         "OK — monde {}x{} (terre {} / océan {}), {} tours simulés, journal: {}",
         world.width, world.height, world.land_tiles, world.ocean_tiles, world.turn, args.log
     );
+    if args.settle.is_some() {
+        let (pop, tiles) = world.nation_stats(0);
+        println!("Nation 0 : {pop:.0} habitants sur {tiles} case(s)");
+    }
 }
 
 /// Arguments de la ligne de commande.
@@ -86,6 +103,7 @@ struct Args {
     log: String,
     snapshot: Option<String>,
     inspect: Option<(u32, u32)>,
+    settle: Option<(u32, u32)>,
 }
 
 impl Args {
@@ -97,6 +115,7 @@ impl Args {
         let mut log = String::from("logs/run.jsonl");
         let mut snapshot = None;
         let mut inspect = None;
+        let mut settle = None;
 
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -128,6 +147,7 @@ impl Args {
                 }
                 "--snapshot" => snapshot = it.next(),
                 "--inspect" => inspect = it.next().and_then(parse_xy),
+                "--settle" => settle = it.next().and_then(parse_xy),
                 other => eprintln!("argument ignoré : {other}"),
             }
         }
@@ -140,6 +160,7 @@ impl Args {
             log,
             snapshot,
             inspect,
+            settle,
         }
     }
 }

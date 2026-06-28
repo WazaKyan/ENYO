@@ -1,0 +1,91 @@
+//! Atteignabilité sur la grille (système S2) : coût de terrain + Dijkstra borné.
+//!
+//! **Entiers + ordre canonique** (tie-break par index) pour un déterminisme
+//! parfait du replay/audit (cf. contrat dans `CLAUDE.md`). Enroulement sur X.
+
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
+use crate::tile::{Tile, TileKind};
+
+/// Coût (entier) pour ENTRER dans une case, selon le terrain et la tech navale.
+/// Océan = infranchissable sans tech Lien ; relief = plus cher.
+pub fn tile_cost(tile: &Tile, naval_tier: u8) -> u32 {
+    match tile.kind {
+        TileKind::Land => 10 + (tile.ruggedness * 40.0) as u32,
+        TileKind::Ocean => {
+            if naval_tier == 0 {
+                u32::MAX // infranchissable
+            } else {
+                // moins cher à mesure que la tech navale progresse
+                30 + 20 * (3u32.saturating_sub(naval_tier as u32))
+            }
+        }
+    }
+}
+
+/// Budget de portée d'essaimage selon le palier de la branche Essor.
+pub fn range_budget(essor_tier: u8) -> u32 {
+    60 + 40 * essor_tier as u32
+}
+
+/// Voisins (4-connexité) avec enroulement sur X et bornage sur Y.
+fn neighbors(idx: usize, width: u32, height: u32) -> [Option<usize>; 4] {
+    let w = width as i64;
+    let h = height as i64;
+    let x = (idx as i64) % w;
+    let y = (idx as i64) / w;
+    let mut out = [None; 4];
+    let dirs = [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)];
+    for (k, (dx, dy)) in dirs.iter().enumerate() {
+        let nx = (x + dx).rem_euclid(w); // X s'enroule (cylindre)
+        let ny = y + dy;
+        if ny < 0 || ny >= h {
+            continue; // Y ne s'enroule pas (pôles)
+        }
+        out[k] = Some((ny * w + nx) as usize);
+    }
+    out
+}
+
+/// Coût minimal pour atteindre `to` depuis `from`, borné par `budget`.
+/// Renvoie `Some(coût)` si atteignable dans le budget, sinon `None`.
+/// Dijkstra déterministe (tas min sur (coût, index) — tie-break par index).
+pub fn reach_cost(
+    tiles: &[Tile],
+    width: u32,
+    height: u32,
+    from: usize,
+    to: usize,
+    budget: u32,
+    naval_tier: u8,
+) -> Option<u32> {
+    if from == to {
+        return Some(0);
+    }
+    let mut dist = vec![u32::MAX; tiles.len()];
+    dist[from] = 0;
+    let mut heap = BinaryHeap::new();
+    heap.push(Reverse((0u32, from)));
+
+    while let Some(Reverse((d, u))) = heap.pop() {
+        if u == to {
+            return Some(d);
+        }
+        if d > dist[u] || d >= budget {
+            continue;
+        }
+        for nb in neighbors(u, width, height).into_iter().flatten() {
+            let c = tile_cost(&tiles[nb], naval_tier);
+            if c == u32::MAX {
+                continue;
+            }
+            let nd = d.saturating_add(c);
+            if nd <= budget && nd < dist[nb] {
+                dist[nb] = nd;
+                heap.push(Reverse((nd, nb)));
+            }
+        }
+    }
+    None
+}

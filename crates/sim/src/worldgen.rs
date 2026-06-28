@@ -86,6 +86,7 @@ pub fn generate(seed: u64, width: u32, height: u32) -> GenOutcome {
                 marine_life,
                 temperature: mean_temperature,
                 precip_now: precipitation,
+                owner: None,
                 population: 0.0,
                 development: 0.0,
                 devastation: 0.0,

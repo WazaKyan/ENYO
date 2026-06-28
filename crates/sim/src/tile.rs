@@ -79,7 +79,9 @@ pub struct Tile {
     /// Précipitations courantes 0..1.
     pub precip_now: f32,
 
-    // --- Anthropique (Phase 2 — réservé, à 0 pour l'instant) ---
+    // --- Anthropique (Phase 2) ---
+    /// Nation propriétaire de la case (id), ou `None` si inoccupée.
+    pub owner: Option<u16>,
     pub population: f32,
     pub development: f32,
     pub devastation: f32,
