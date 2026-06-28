@@ -25,6 +25,9 @@ use tile::{Tile, TileKind};
 /// Constante FNV-1a (prime 64 bits) pour le checksum d'audit.
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
+/// Savoir produit par tour par une case développée et peuplée (calibrage S3).
+const KNOWLEDGE_RATE: f32 = 1.0;
+
 /// L'état complet de la partie — reconstructible depuis une graine et une suite
 /// de commandes (donc rejouable).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -333,7 +336,7 @@ impl World {
                 let newpop = t.population;
 
                 if let Some(i) = ni {
-                    knowledge_gain[i] += dev * (newpop / 1000.0).min(1.0) * 0.1;
+                    knowledge_gain[i] += dev * (newpop / 1000.0).min(1.0) * KNOWLEDGE_RATE;
                 }
             }
         }
@@ -378,7 +381,7 @@ impl World {
 
 /// Coût en savoir pour passer du palier `tier` au suivant.
 fn tech_cost(tier: u8) -> f32 {
-    50.0 * (tier as f32 + 1.0)
+    25.0 * (tier as f32 + 1.0)
 }
 
 /// Une commande rejetée, loguée pour l'audit.

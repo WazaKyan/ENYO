@@ -89,3 +89,38 @@ pub fn reach_cost(
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tile::TileKind;
+    use crate::World;
+
+    #[test]
+    fn range_grows_with_essor() {
+        assert!(range_budget(2) > range_budget(0));
+    }
+
+    #[test]
+    fn ocean_blocks_without_naval_tech() {
+        // Bande terre/océan/terre/océan (largeur 4, cylindre) : pour aller de la
+        // case 0 à la case 2, les deux chemins traversent un océan.
+        let mut w = World::new(1, 4, 1);
+        for (i, kind) in [
+            TileKind::Land,
+            TileKind::Ocean,
+            TileKind::Land,
+            TileKind::Ocean,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            w.tiles[i].kind = kind;
+            w.tiles[i].ruggedness = 0.0;
+        }
+        // Sans tech navale : infranchissable.
+        assert_eq!(reach_cost(&w.tiles, 4, 1, 0, 2, 1000, 0), None);
+        // Avec tech navale : franchissable.
+        assert!(reach_cost(&w.tiles, 4, 1, 0, 2, 1000, 2).is_some());
+    }
+}
