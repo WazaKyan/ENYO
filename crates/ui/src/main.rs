@@ -25,7 +25,7 @@ use proto::{Building, Command, Event};
 use sim::World;
 
 const TOP_H: i32 = 40;
-const BOT_H: i32 = 88; // deux rangées de boutons (outils ; recherche + vitesse)
+const BOT_H: i32 = 126; // 3 rangées : actions ; bâtir ; recherche + vitesse
 
 /// Période d'un mois à la vitesse x1 (horloge murale, microsecondes entières).
 const BASE_TICK_US: i64 = 500_000;
@@ -147,7 +147,7 @@ impl Input {
 }
 
 /// Touches surveillées chaque frame (pour bâtir l'Input depuis la fenêtre).
-const WATCH: [Key; 23] = [
+const WATCH: [Key; 25] = [
     Key::A,
     Key::D,
     Key::W,
@@ -165,6 +165,8 @@ const WATCH: [Key; 23] = [
     Key::G,
     Key::P,
     Key::I,
+    Key::C,
+    Key::R,
     Key::Space,
     Key::Key0,
     Key::Key1,
@@ -747,8 +749,9 @@ impl App {
         let (money, mat, infl) = n.map(|n| (n.money, n.materials, n.influence)).unwrap_or((0, 0, 0));
         let year = world.turn / 12;
         let month = world.turn % 12 + 1;
+        let house = n.map(|n| n.housing).unwrap_or(0);
         self.stats = format!(
-            "An {year} M{month:02} N{}  {pop:.0}h {tiles}c {prov}p  |  argent {money}  mat {mat}  infl {infl}  sci {kn:.0}",
+            "An {year} M{month:02} N{}  {pop:.0}h {tiles}c {prov}p  |  argent {money}  mat {mat}  hab {house}  infl {infl}  sci {kn:.0}",
             self.player
         );
     }
@@ -851,6 +854,8 @@ impl App {
                 (Key::G, Tool::War),
                 (Key::P, Tool::Peace),
                 (Key::I, Tool::Build(Building::Industry)),
+                (Key::C, Tool::Build(Building::Commerce)),
+                (Key::R, Tool::Build(Building::Infrastructure)),
             ] {
                 if input.key_pressed(k) {
                     self.set_tool(t);
@@ -1210,19 +1215,19 @@ impl App {
         let mxt = mxn - pad - turn_w;
         v.push((GameBtn::EndTurn, Button::new(mxt, 6, turn_w, bh, "Fin de tour")));
 
-        // Bas, 2 rangées : rangée 1 = outils ; rangée 2 = recherche + vitesse.
+        // Bas, 3 rangées : actions ; bâtir ; recherche + vitesse.
         let tbh = 28;
         let row1 = h - BOT_H + 8;
         let row2 = h - BOT_H + 44;
+        let row3 = h - BOT_H + 80;
         let playing = !self.spectator && !self.replay_mode;
 
-        // Rangée 1 : outils (Inspecter toujours ; le reste seulement en mode Jeu).
-        let tools: &[(&str, Tool)] = if playing {
+        // Rangée 1 : actions (Inspecter toujours ; le reste seulement en mode Jeu).
+        let actions: &[(&str, Tool)] = if playing {
             &[
                 ("Inspecter", Tool::None),
                 ("Fonder", Tool::Found),
                 ("Essaimer", Tool::Swarm),
-                ("Industrie", Tool::Build(Building::Industry)),
                 ("Mobiliser", Tool::Mobilize),
                 ("Marcher", Tool::March),
                 ("Guerre", Tool::War),
@@ -1232,25 +1237,39 @@ impl App {
             &[("Inspecter", Tool::None)]
         };
         let mut x = pad;
-        for (lbl, t) in tools {
+        for (lbl, t) in actions {
             let bw = gui::text_w(lbl, 2) + 18;
             v.push((GameBtn::Tool(*t), Button::new(x, row1, bw, tbh, *lbl)));
             x += bw + 6;
         }
 
-        // Rangée 2 : recherche (mode Jeu) puis vitesse (tous modes).
+        // Rangée 2 : bâtir (mode Jeu).
+        if playing {
+            let mut x = pad;
+            for (lbl, b) in [
+                ("Industrie", Building::Industry),
+                ("Commerce", Building::Commerce),
+                ("Infrastructure", Building::Infrastructure),
+            ] {
+                let bw = gui::text_w(lbl, 2) + 18;
+                v.push((GameBtn::Tool(Tool::Build(b)), Button::new(x, row2, bw, tbh, lbl)));
+                x += bw + 6;
+            }
+        }
+
+        // Rangée 3 : recherche (mode Jeu) puis vitesse (tous modes).
         let mut x = pad;
         if playing {
             for (i, lbl) in ["Essor", "Terroir", "Fer", "Lien"].iter().enumerate() {
                 let bw = gui::text_w(lbl, 2) + 18;
-                v.push((GameBtn::Research(i as u8), Button::new(x, row2, bw, tbh, *lbl)));
+                v.push((GameBtn::Research(i as u8), Button::new(x, row3, bw, tbh, *lbl)));
                 x += bw + 6;
             }
             x += 24;
         }
         for (lbl, s) in [("Pause", 0u32), ("x1", 1), ("x2", 2), ("x4", 3), ("Max", 4)] {
             let bw = gui::text_w(lbl, 2) + 16;
-            v.push((GameBtn::Speed(s), Button::new(x, row2, bw, tbh, lbl)));
+            v.push((GameBtn::Speed(s), Button::new(x, row3, bw, tbh, lbl)));
             x += bw + 6;
         }
         v

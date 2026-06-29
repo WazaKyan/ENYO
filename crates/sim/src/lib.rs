@@ -7,6 +7,7 @@
 //! seul journal.
 
 pub mod climate;
+pub mod connect;
 pub mod diplo;
 pub mod dynamics;
 pub mod nation;
@@ -41,6 +42,12 @@ const INDUSTRY_BASE: f32 = 8.0;
 const INDUSTRY_WORKFORCE: f32 = 1000.0;
 /// Dévastation ajoutée chaque mois par une industrie (pollution).
 const INDUSTRY_POLLUTION: f32 = 0.01;
+/// Matériaux/mois qu'un commerce idéal (main-d'œuvre pleine) transforme.
+const COMMERCE_BASE: f32 = 10.0;
+/// Argent produit par matériau transformé par le commerce.
+const MONEY_PER_MAT: i64 = 3;
+/// Habitation produite par matériau transformé par le commerce.
+const HOUSING_PER_MAT: i64 = 1;
 
 /// L'état complet de la partie — reconstructible depuis une graine et une suite
 /// de commandes (donc rejouable).
@@ -622,9 +629,14 @@ impl World {
         for n in self.nations.iter_mut() {
             n.influence += INFLUENCE_BASE;
         }
-        // Production des bâtiments (E1 : industrie). Contributions ENTIÈRES par
-        // case, sommées en ordre d'index → indépendant de l'ordre, déterministe.
+        // Réseaux d'infrastructure (E2) : main-d'œuvre mise en commun par les routes.
+        let networks = connect::Networks::build(&self.tiles, width, height);
+        // Production des bâtiments. Gains ENTIERS par nation, sommés/appliqués en
+        // ordre d'index → indépendant de l'ordre, déterministe. La consommation de
+        // matériaux par le commerce se fait depuis le stock (ordre d'index).
         let mut materials_gain = vec![0i64; self.nations.len()];
+        let mut money_gain = vec![0i64; self.nations.len()];
+        let mut housing_gain = vec![0i64; self.nations.len()];
         for y in 0..height {
             for x in 0..width {
                 let idx = y as usize * width as usize + x as usize;
@@ -637,29 +649,38 @@ impl World {
                 let Some(ni) = self.nations.iter().position(|n| n.id == owner) else {
                     continue;
                 };
-                if building == Building::Industry {
-                    // Main-d'œuvre connectée (E1 : la case + ses 4 voisines de la
-                    // même nation ; le réseau d'infrastructure viendra en E2).
-                    let mut wpop = self.tiles[idx].population;
-                    for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
-                        let nx = (x as i64 + dx).rem_euclid(width as i64);
-                        let ny = y as i64 + dy;
-                        if ny < 0 || ny >= height as i64 {
-                            continue;
-                        }
-                        let v = (ny * width as i64 + nx) as usize;
-                        if self.tiles[v].owner == Some(owner) {
-                            wpop += self.tiles[v].population;
+                let cpop = networks.connected_pop(&self.tiles, idx, owner);
+                match building {
+                    Building::Industry => {
+                        materials_gain[ni] += industry_output(&self.tiles[idx], cpop);
+                        let t = &mut self.tiles[idx];
+                        t.devastation = (t.devastation + INDUSTRY_POLLUTION).min(1.0);
+                    }
+                    Building::Commerce if cpop > 0.0 => {
+                        // Transforme des matériaux (selon main-d'œuvre, atténué par
+                        // la dévastation) en argent + habitation.
+                        let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
+                        let want = (COMMERCE_BASE * workforce
+                            * (1.0 - self.tiles[idx].devastation))
+                            .max(0.0)
+                            .round() as i64;
+                        let used = want.min(self.nations[ni].materials.max(0));
+                        if used > 0 {
+                            self.nations[ni].materials -= used;
+                            money_gain[ni] += used * MONEY_PER_MAT;
+                            housing_gain[ni] += used * HOUSING_PER_MAT;
                         }
                     }
-                    materials_gain[ni] += industry_output(&self.tiles[idx], wpop);
-                    let t = &mut self.tiles[idx];
-                    t.devastation = (t.devastation + INDUSTRY_POLLUTION).min(1.0);
+                    // Infrastructure : aucun produit (elle connecte) ; les autres
+                    // bâtiments (éducation, militaire) viendront en E3/E4.
+                    _ => {}
                 }
             }
         }
-        for (i, g) in materials_gain.iter().enumerate() {
-            self.nations[i].materials += g;
+        for i in 0..self.nations.len() {
+            self.nations[i].materials += materials_gain[i];
+            self.nations[i].money += money_gain[i];
+            self.nations[i].housing += housing_gain[i];
         }
     }
 
@@ -737,6 +758,8 @@ impl World {
             h ^= n.materials as u64;
             h = h.wrapping_mul(FNV_PRIME);
             h ^= n.influence as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+            h ^= n.housing as u64;
             h = h.wrapping_mul(FNV_PRIME);
         }
         for &(a, b) in self.diplomacy.wars() {

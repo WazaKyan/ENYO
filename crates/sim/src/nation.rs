@@ -32,6 +32,8 @@ pub struct Nation {
     pub materials: i64,
     /// Influence : +1/mois de base ; étendre le territoire.
     pub influence: i64,
+    /// Habitation : produite par le commerce ; loger/étendre la population (E5).
+    pub housing: i64,
 }
 
 impl Nation {
@@ -43,6 +45,7 @@ impl Nation {
             money: STARTING_MONEY,
             materials: 0,
             influence: 0,
+            housing: 0,
         }
     }
 }
