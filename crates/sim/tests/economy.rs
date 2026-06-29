@@ -451,6 +451,44 @@ fn farm_produces_food() {
 }
 
 #[test]
+fn demolish_refunds_scaled_and_allows_rebuild() {
+    let mut w = World::new(31, 80, 60);
+    let (x, y) = productive(&w);
+    w.apply(Command::Settle {
+        x,
+        y,
+        nation: 0,
+        population: 500,
+    });
+    w.apply(Command::Build {
+        x,
+        y,
+        nation: 0,
+        building: Building::Industry, // coût 100 argent
+    });
+    // Dévaste la case à 50 % -> remboursement = 50 % × (1 − 0.5) × 100 = 25.
+    let i = (y * w.width + x) as usize;
+    w.tiles[i].devastation = 0.5;
+    let money = w.nation(0).unwrap().money;
+    let ev = w.apply(Command::Demolish { x, y, nation: 0 });
+    assert!(matches!(ev[0], Event::Demolished { .. }), "démoli: {:?}", ev[0]);
+    assert_eq!(w.tile(x, y).building, None, "case vidée");
+    assert_eq!(
+        w.nation(0).unwrap().money,
+        money + 25,
+        "remboursement réduit par la dévastation"
+    );
+    // On peut reconstruire autre chose à la place.
+    let ev = w.apply(Command::Build {
+        x,
+        y,
+        nation: 0,
+        building: Building::City,
+    });
+    assert!(matches!(ev[0], Event::Built { .. }), "reconstruction: {:?}", ev[0]);
+}
+
+#[test]
 fn build_rejected_when_unaffordable_or_invalid() {
     let mut w = World::new(7, 80, 60);
     let (x, y) = productive(&w);

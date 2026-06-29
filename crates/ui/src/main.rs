@@ -64,6 +64,8 @@ enum Tool {
     Peace,
     /// Bâtir un bâtiment (S8) sur la case cliquée.
     Build(Building),
+    /// Démolir le bâtiment de la case cliquée (remboursement partiel).
+    Demolish,
     /// Recruter une unité (S5) sur la caserne cliquée.
     Create(UnitKind),
     /// Contrôle des unités : 1er clic = sélection ; 2e clic = déplacer / attaquer.
@@ -83,7 +85,7 @@ enum Category {
 /// Catégorie d'un outil (pour synchroniser le sous-menu ouvert avec l'outil actif).
 fn category_of(t: Tool) -> Option<Category> {
     match t {
-        Tool::Swarm => Some(Category::Economy),
+        Tool::Swarm | Tool::Demolish => Some(Category::Economy),
         Tool::Create(_) | Tool::Units => Some(Category::Military),
         Tool::War | Tool::Peace => Some(Category::Diplomacy),
         Tool::Build(Building::Military) => Some(Category::Military),
@@ -1193,6 +1195,14 @@ impl App {
                 });
                 self.report(&ev);
             }
+            Tool::Demolish => {
+                let ev = self.apply(Command::Demolish {
+                    x: tx,
+                    y: ty,
+                    nation: player,
+                });
+                self.report(&ev);
+            }
             Tool::Create(kind) => {
                 let ev = self.apply(Command::CreateUnit {
                     x: tx,
@@ -1363,6 +1373,7 @@ impl App {
                     push_tool(&mut v, &mut x, "Infrastructure", Tool::Build(Building::Infrastructure));
                     push_tool(&mut v, &mut x, "Ferme", Tool::Build(Building::Farm));
                     push_tool(&mut v, &mut x, "Education", Tool::Build(Building::Education));
+                    push_tool(&mut v, &mut x, "Demolir", Tool::Demolish);
                 }
                 Category::Military => {
                     push_tool(&mut v, &mut x, "Unites", Tool::Units);
@@ -1524,6 +1535,7 @@ impl App {
             Tool::Build(Building::Education) => "Education",
             Tool::Build(Building::Military) => "Caserne",
             Tool::Build(Building::Farm) => "Ferme",
+            Tool::Demolish => "Demolir",
             Tool::Create(UnitKind::Infantry) => "Infanterie",
             Tool::Create(UnitKind::Archer) => "Archers",
             Tool::Create(UnitKind::Cavalry) => "Cavalerie",
@@ -1757,6 +1769,11 @@ fn feedback(events: &[Event]) -> Option<String> {
             Event::PeaceMade { target, .. } => return Some(format!("paix avec N{target}")),
             Event::Built { x, y, building, .. } => {
                 return Some(format!("bati {} ({x},{y})", building_fr(*building)))
+            }
+            Event::Demolished {
+                building, refund, ..
+            } => {
+                return Some(format!("demoli {} (+{refund} argent)", building_fr(*building)))
             }
             _ => {}
         }

@@ -25,6 +25,11 @@
   privée de fermes **reflue vers la subsistance**. Remplace l'urbanisation auto d'E5.
   ✅ **fait (tranche B)**.
 - **Croissance = VILLES UNIQUEMENT + FAMINE** (choix joueur). ✅ **fait (tranche B)**.
+- **Démolir / remplacer** : on peut **démolir** le bâtiment d'une case (puis bâtir
+  autre chose). Remboursement = **moitié du coût × état de la case (1 − dévastation)**
+  : une case ravagée rend moins. (`Command::Demolish`.) ✅ fait.
+- **Pollution lente** : une industrie n'abîme la case que **très lentement** (sur
+  plusieurs décennies) — `INDUSTRY_POLLUTION` faible + résorption lente. ✅ fait.
 - **IA & genèse** : chaque nation démarre sur une case **accueillante** (capacité
   ≥ `HOSPITABLE_CAP = 1500`, pour croître au-delà de 1000 et s'étendre — pas de
   soft-lock), **tirée aléatoirement mais de façon seedée** (même graine ⇒ même

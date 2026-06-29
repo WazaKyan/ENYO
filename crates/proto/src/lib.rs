@@ -69,6 +69,9 @@ pub enum Command {
         nation: u16,
         building: Building,
     },
+    /// Démolit le bâtiment d'une case possédée (pour reconstruire autre chose).
+    /// Rembourse la moitié du coût × l'état (1 − dévastation) de la case.
+    Demolish { x: u32, y: u32, nation: u16 },
     /// Recrute une **unité** (S5) sur une case possédée portant une **caserne**.
     /// Coûte de l'argent + de la force (générée par la caserne) ; type tech-gaté.
     CreateUnit {
@@ -149,6 +152,13 @@ pub enum Event {
         y: u32,
         nation: u16,
         building: Building,
+    },
+    /// Un bâtiment a été démoli (remboursement partiel selon l'état de la case).
+    Demolished {
+        x: u32,
+        y: u32,
+        building: Building,
+        refund: i64,
     },
     /// Une unité a été recrutée (S5).
     UnitCreated {

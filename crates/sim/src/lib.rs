@@ -223,6 +223,7 @@ impl World {
                 nation,
                 building,
             } => self.build(x, y, nation, building),
+            Command::Demolish { x, y, nation } => self.demolish(x, y, nation),
             Command::CreateUnit {
                 x,
                 y,
@@ -784,6 +785,37 @@ impl World {
             y,
             nation,
             building,
+        }]
+    }
+
+    /// Démolit le bâtiment d'une case possédée. Rembourse **la moitié du coût ×
+    /// l'état de la case** (1 − dévastation) : une case ravagée rend moins. La case
+    /// redevient vide (on peut rebâtir autre chose).
+    fn demolish(&mut self, x: u32, y: u32, nation: u16) -> Vec<Event> {
+        if x >= self.width || y >= self.height {
+            return reject("hors carte");
+        }
+        let idx = self.index(x, y);
+        if self.tiles[idx].owner != Some(nation) {
+            return reject("case non possédée");
+        }
+        let Some(building) = self.tiles[idx].building else {
+            return reject("aucun bâtiment à démolir");
+        };
+        let (money_cost, mat_cost, housing_cost) = build_cost(building);
+        let intact = (1.0 - self.tiles[idx].devastation).clamp(0.0, 1.0);
+        let refund = |c: i64| ((c as f32) * 0.5 * intact).round() as i64;
+        let (rm, rmat, rh) = (refund(money_cost), refund(mat_cost), refund(housing_cost));
+        let ni = self.ensure_nation(nation);
+        self.nations[ni].money += rm;
+        self.nations[ni].materials += rmat;
+        self.nations[ni].housing += rh;
+        self.tiles[idx].building = None;
+        vec![Event::Demolished {
+            x,
+            y,
+            building,
+            refund: rm,
         }]
     }
 
