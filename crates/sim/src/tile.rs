@@ -2,6 +2,7 @@
 //! fréquence de changement : géologie (statique) · climat (lent) · biosphère
 //! (dynamique lente) · météo (chaque tour) · anthropique (Phase 2).
 
+use proto::Building;
 use serde::{Deserialize, Serialize};
 
 /// Nature de la case. (Phase 1 : terre ou océan ; lacs/côtes viendront plus tard.)
@@ -87,4 +88,6 @@ pub struct Tile {
     pub devastation: f32,
     /// Force militaire stationnée sur la case (système S5).
     pub force: f32,
+    /// Bâtiment éventuel (S8 — économie interne) ; `None` = habitation/terrain nu.
+    pub building: Option<Building>,
 }

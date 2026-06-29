@@ -91,6 +91,7 @@ pub fn generate(seed: u64, width: u32, height: u32) -> GenOutcome {
                 development: 0.0,
                 devastation: 0.0,
                 force: 0.0,
+                building: None,
             });
         }
     }

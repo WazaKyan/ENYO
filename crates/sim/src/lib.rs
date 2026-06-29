@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 
 use diplo::Diplomacy;
 use nation::Nation;
-use proto::{Command, Event};
+use proto::{Building, Command, Event};
 use rng::Rng;
 use serde::{Deserialize, Serialize};
 use tile::{Tile, TileKind};
@@ -31,6 +31,16 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// Savoir produit par tour par une case développée et peuplée (calibrage S3).
 const KNOWLEDGE_RATE: f32 = 1.0;
+
+// --- Calibrage économie interne S8 (single-source) ---
+/// Influence gagnée par nation et par mois (de base).
+const INFLUENCE_BASE: i64 = 1;
+/// Matériaux max/mois d'une industrie idéale, pleinement dotée en main-d'œuvre.
+const INDUSTRY_BASE: f32 = 8.0;
+/// Population connectée pour une main-d'œuvre pleine (au-delà : plafonnée).
+const INDUSTRY_WORKFORCE: f32 = 1000.0;
+/// Dévastation ajoutée chaque mois par une industrie (pollution).
+const INDUSTRY_POLLUTION: f32 = 0.01;
 
 /// L'état complet de la partie — reconstructible depuis une graine et une suite
 /// de commandes (donc rejouable).
@@ -153,6 +163,12 @@ impl World {
                 to_x,
                 to_y,
             } => self.march(from_x, from_y, to_x, to_y),
+            Command::Build {
+                x,
+                y,
+                nation,
+                building,
+            } => self.build(x, y, nation, building),
             Command::DeclareWar { nation, target } => self.declare_war(nation, target),
             Command::MakePeace { nation, target } => self.make_peace(nation, target),
             Command::DirectorGrievance { from, to, amount } => {
@@ -601,6 +617,78 @@ impl World {
         for (a, b) in borders {
             self.diplomacy.add_grievance(a, b, 0.1);
         }
+
+        // --- Économie interne S8 ---
+        for n in self.nations.iter_mut() {
+            n.influence += INFLUENCE_BASE;
+        }
+        // Production des bâtiments (E1 : industrie). Contributions ENTIÈRES par
+        // case, sommées en ordre d'index → indépendant de l'ordre, déterministe.
+        let mut materials_gain = vec![0i64; self.nations.len()];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = y as usize * width as usize + x as usize;
+                let Some(building) = self.tiles[idx].building else {
+                    continue;
+                };
+                let Some(owner) = self.tiles[idx].owner else {
+                    continue;
+                };
+                let Some(ni) = self.nations.iter().position(|n| n.id == owner) else {
+                    continue;
+                };
+                if building == Building::Industry {
+                    // Main-d'œuvre connectée (E1 : la case + ses 4 voisines de la
+                    // même nation ; le réseau d'infrastructure viendra en E2).
+                    let mut wpop = self.tiles[idx].population;
+                    for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+                        let nx = (x as i64 + dx).rem_euclid(width as i64);
+                        let ny = y as i64 + dy;
+                        if ny < 0 || ny >= height as i64 {
+                            continue;
+                        }
+                        let v = (ny * width as i64 + nx) as usize;
+                        if self.tiles[v].owner == Some(owner) {
+                            wpop += self.tiles[v].population;
+                        }
+                    }
+                    materials_gain[ni] += industry_output(&self.tiles[idx], wpop);
+                    let t = &mut self.tiles[idx];
+                    t.devastation = (t.devastation + INDUSTRY_POLLUTION).min(1.0);
+                }
+            }
+        }
+        for (i, g) in materials_gain.iter().enumerate() {
+            self.nations[i].materials += g;
+        }
+    }
+
+    /// Bâtit (S8) un bâtiment sur une case possédée et vide, si la nation paie.
+    fn build(&mut self, x: u32, y: u32, nation: u16, building: Building) -> Vec<Event> {
+        if x >= self.width || y >= self.height {
+            return reject("hors carte");
+        }
+        let idx = self.index(x, y);
+        if self.tiles[idx].owner != Some(nation) {
+            return reject("case non possédée");
+        }
+        if self.tiles[idx].building.is_some() {
+            return reject("case déjà bâtie");
+        }
+        let (money_cost, mat_cost) = build_cost(building);
+        let ni = self.ensure_nation(nation);
+        if self.nations[ni].money < money_cost || self.nations[ni].materials < mat_cost {
+            return reject("ressources insuffisantes");
+        }
+        self.nations[ni].money -= money_cost;
+        self.nations[ni].materials -= mat_cost;
+        self.tiles[idx].building = Some(building);
+        vec![Event::Built {
+            x,
+            y,
+            nation,
+            building,
+        }]
     }
 
     /// Checksum déterministe de l'état (FNV-1a). Empreinte d'audit : deux runs
@@ -627,6 +715,15 @@ impl World {
                 TileKind::Land => 2,
             };
             h = h.wrapping_mul(FNV_PRIME);
+            h ^= match t.building {
+                None => 0,
+                Some(proto::Building::Industry) => 3,
+                Some(proto::Building::Commerce) => 4,
+                Some(proto::Building::Infrastructure) => 5,
+                Some(proto::Building::Education) => 6,
+                Some(proto::Building::Military) => 7,
+            };
+            h = h.wrapping_mul(FNV_PRIME);
         }
         for n in &self.nations {
             fnv_u32(&mut h, n.id as u32);
@@ -635,6 +732,12 @@ impl World {
                 h ^= tier as u64;
                 h = h.wrapping_mul(FNV_PRIME);
             }
+            h ^= n.money as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+            h ^= n.materials as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+            h ^= n.influence as u64;
+            h = h.wrapping_mul(FNV_PRIME);
         }
         for &(a, b) in self.diplomacy.wars() {
             fnv_u32(&mut h, a as u32);
@@ -655,6 +758,26 @@ impl World {
 /// la crate `ai` pour décider quand chercher.
 pub fn tech_cost(tier: u8) -> f32 {
     25.0 * (tier as f32 + 1.0)
+}
+
+/// Coût de construction (argent, matériaux) d'un bâtiment (S8, single-source).
+pub fn build_cost(b: Building) -> (i64, i64) {
+    match b {
+        Building::Industry => (100, 0),
+        Building::Commerce => (120, 20),
+        Building::Infrastructure => (40, 20),
+        Building::Education => (150, 30),
+        Building::Military => (120, 40),
+    }
+}
+
+/// Matériaux/mois produits par une industrie : ∝ stats de case (sol, végétation,
+/// intempéries) × main-d'œuvre connectée × (1 − dévastation). Entier (déterminisme).
+fn industry_output(t: &Tile, connected_pop: f32) -> i64 {
+    let terrain = (t.soil_fertility + t.vegetation + t.precip_now) / 3.0;
+    let workforce = (connected_pop / INDUSTRY_WORKFORCE).min(1.0);
+    let out = INDUSTRY_BASE * terrain * workforce * (1.0 - t.devastation);
+    out.max(0.0).round() as i64
 }
 
 /// Une commande rejetée, loguée pour l'audit.

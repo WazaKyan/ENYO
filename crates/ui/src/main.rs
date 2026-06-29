@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use gui::{Button, Canvas};
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
-use proto::{Command, Event};
+use proto::{Building, Command, Event};
 use sim::World;
 
 const TOP_H: i32 = 40;
@@ -65,6 +65,8 @@ enum Tool {
     March,
     War,
     Peace,
+    /// Bâtir un bâtiment (S8) sur la case cliquée.
+    Build(Building),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -145,7 +147,7 @@ impl Input {
 }
 
 /// Touches surveillées chaque frame (pour bâtir l'Input depuis la fenêtre).
-const WATCH: [Key; 22] = [
+const WATCH: [Key; 23] = [
     Key::A,
     Key::D,
     Key::W,
@@ -162,6 +164,7 @@ const WATCH: [Key; 22] = [
     Key::B,
     Key::G,
     Key::P,
+    Key::I,
     Key::Space,
     Key::Key0,
     Key::Key1,
@@ -453,6 +456,15 @@ fn run_audit(args: &Args) {
     let p = center_of(&app.game_buttons(w, h), GameBtn::Research(0));
     a.step(&mut app, &Input::click_at(p.0, p.1), "recherche_essor");
 
+    // Économie (S8) : bâtir une industrie sur la case centrale + laisser produire.
+    let p = center_of(
+        &app.game_buttons(w, h),
+        GameBtn::Tool(Tool::Build(Building::Industry)),
+    );
+    a.step(&mut app, &Input::click_at(p.0, p.1), "outil_industrie");
+    a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "industrie_batie");
+    a.step(&mut app, &Input::key(Key::Space), "industrie_apres_tour");
+
     // Outil militaire : Mobiliser sur la case centrale (du joueur) -> force.
     let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::Mobilize));
     a.step(&mut app, &Input::click_at(p.0, p.1), "outil_mobiliser");
@@ -730,11 +742,13 @@ impl App {
             .iter()
             .filter(|p| p.owner == self.player)
             .count();
-        let kn = world.nation(self.player).map(|n| n.knowledge).unwrap_or(0.0);
+        let n = world.nation(self.player);
+        let kn = n.map(|n| n.knowledge).unwrap_or(0.0);
+        let (money, mat, infl) = n.map(|n| (n.money, n.materials, n.influence)).unwrap_or((0, 0, 0));
         let year = world.turn / 12;
         let month = world.turn % 12 + 1;
         self.stats = format!(
-            "An {year} M{month:02}   N{}   {pop:.0} hab   {tiles} cases   {prov} prov   savoir {kn:.0}",
+            "An {year} M{month:02} N{}  {pop:.0}h {tiles}c {prov}p  |  argent {money}  mat {mat}  infl {infl}  sci {kn:.0}",
             self.player
         );
     }
@@ -836,6 +850,7 @@ impl App {
                 (Key::B, Tool::March),
                 (Key::G, Tool::War),
                 (Key::P, Tool::Peace),
+                (Key::I, Tool::Build(Building::Industry)),
             ] {
                 if input.key_pressed(k) {
                     self.set_tool(t);
@@ -1117,6 +1132,15 @@ impl App {
                 }
                 _ => self.last_msg = "REJET : choisis une case ennemie".to_string(),
             },
+            Tool::Build(b) => {
+                let ev = self.apply(Command::Build {
+                    x: tx,
+                    y: ty,
+                    nation: player,
+                    building: b,
+                });
+                self.report(&ev);
+            }
             Tool::None => {}
         }
     }
@@ -1198,6 +1222,7 @@ impl App {
                 ("Inspecter", Tool::None),
                 ("Fonder", Tool::Found),
                 ("Essaimer", Tool::Swarm),
+                ("Industrie", Tool::Build(Building::Industry)),
                 ("Mobiliser", Tool::Mobilize),
                 ("Marcher", Tool::March),
                 ("Guerre", Tool::War),
@@ -1356,6 +1381,11 @@ impl App {
             Tool::March => "Marcher",
             Tool::War => "Guerre",
             Tool::Peace => "Paix",
+            Tool::Build(Building::Industry) => "Industrie",
+            Tool::Build(Building::Commerce) => "Commerce",
+            Tool::Build(Building::Infrastructure) => "Infrastructure",
+            Tool::Build(Building::Education) => "Education",
+            Tool::Build(Building::Military) => "Militaire",
         };
         let tech = self
             .world
@@ -1460,9 +1490,14 @@ impl App {
                     .owner
                     .map(|o| format!("N{o}"))
                     .unwrap_or_else(|| "libre".to_string());
+                let bat = t
+                    .building
+                    .map(|b| format!("{b:?}"))
+                    .unwrap_or_else(|| "aucun".to_string());
                 let lines = [
                     format!("Case ({tx}, {ty})  -  {:?}", t.biome),
                     format!("proprietaire : {owner}"),
+                    format!("batiment     : {bat}"),
                     format!("population   : {:.0}", t.population),
                     format!("developpement: {:.2}", t.development),
                     format!("capacite     : {:.0}", world.capacity_at(tx, ty)),
@@ -1541,6 +1576,9 @@ fn feedback(events: &[Event]) -> Option<String> {
                 return Some(format!("GUERRE declaree a N{target}"))
             }
             Event::PeaceMade { target, .. } => return Some(format!("paix avec N{target}")),
+            Event::Built { x, y, building, .. } => {
+                return Some(format!("bati {building:?} ({x},{y})"))
+            }
             _ => {}
         }
     }

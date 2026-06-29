@@ -5,6 +5,7 @@
 //! pixel-art via un tileset, à venir).
 
 use image::{Rgb, RgbImage};
+use proto::Building;
 use sim::tile::{Biome, Tile, TileKind};
 use sim::World;
 
@@ -344,6 +345,32 @@ fn draw_tile(img: &mut RgbImage, bx: u32, by: u32, px: u32, t: &Tile) {
         }
         _ => {}
     }
+
+    // Bâtiment (S8) : pastille centrale colorée par vocation, à contour sombre
+    // (bien lisible par-dessus le terrain et la teinte de nation).
+    if let Some(b) = t.building {
+        let col = building_color(b);
+        let m = (px / 2).max(3);
+        let ox = bx + (px - m) / 2;
+        let oy = by + (px - m) / 2;
+        for yy in 0..m {
+            for xx in 0..m {
+                let edge = xx == 0 || yy == 0 || xx == m - 1 || yy == m - 1;
+                put(img, ox + xx, oy + yy, if edge { [16, 16, 20] } else { col });
+            }
+        }
+    }
+}
+
+/// Couleur de la pastille d'un bâtiment (S8).
+fn building_color(b: Building) -> [u8; 3] {
+    match b {
+        Building::Industry => [206, 122, 42],       // orange (industrie/fumée)
+        Building::Commerce => [70, 162, 220],       // bleu (échanges)
+        Building::Infrastructure => [150, 150, 156], // gris (routes)
+        Building::Education => [180, 96, 206],       // violet (savoir)
+        Building::Military => [206, 64, 60],         // rouge (armée)
+    }
 }
 
 /// Pose un pixel (borné à l'image).
@@ -420,6 +447,7 @@ fn sample(kind: TileKind, biome: Biome, elevation: f32) -> Tile {
         development: 0.0,
         devastation: 0.0,
         force: 0.0,
+        building: None,
     }
 }
 

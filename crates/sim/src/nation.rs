@@ -12,14 +12,26 @@ pub const LIEN: usize = 3; // naval / liens (franchir l'eau)
 /// Nombre de branches.
 pub const BRANCHES: usize = 4;
 
+/// Stock d'argent au départ d'une nation (S8 — de quoi bâtir ses premières cases).
+pub const STARTING_MONEY: i64 = 500;
+
 /// Une nation (le joueur est la nation 0).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Nation {
     pub id: u16,
-    /// Savoir accumulé, dépensé pour la recherche.
+    /// Savoir/science accumulé, dépensé pour la recherche (S3 ; alimenté par
+    /// l'éducation en S8, + un flux de base par densité).
     pub knowledge: f32,
     /// Palier atteint dans chaque branche (Essor, Terroir, Fer, Lien).
     pub tech: [u8; BRANCHES],
+
+    // --- Ressources S8 (économie interne), entières → déterminisme sans dérive ---
+    /// Argent : bâtir + entretien mensuel.
+    pub money: i64,
+    /// Matériaux : produits par l'industrie, consommés par le commerce / la construction.
+    pub materials: i64,
+    /// Influence : +1/mois de base ; étendre le territoire.
+    pub influence: i64,
 }
 
 impl Nation {
@@ -28,6 +40,9 @@ impl Nation {
             id,
             knowledge: 0.0,
             tech: [0; BRANCHES],
+            money: STARTING_MONEY,
+            materials: 0,
+            influence: 0,
         }
     }
 }

@@ -7,6 +7,21 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Vocation d'une case (système S8 — économie interne). Une case n'en porte qu'une.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Building {
+    /// Produit des matériaux (∝ stats de case × pop connectée) ; pollue (dévastation).
+    Industry,
+    /// Transforme les matériaux en argent + habitation + croissance.
+    Commerce,
+    /// Relie les cases en réseau (routes) — pas de production.
+    Infrastructure,
+    /// Génère de la science (exige habitation + commerce connectés).
+    Education,
+    /// Génère des soldats (force) ; entretien mensuel.
+    Military,
+}
+
 /// Une action demandée à la simulation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Command {
@@ -43,6 +58,13 @@ pub enum Command {
         from_y: u32,
         to_x: u32,
         to_y: u32,
+    },
+    /// Bâtit un bâtiment (S8) sur une case possédée et vide, si la nation paie le coût.
+    Build {
+        x: u32,
+        y: u32,
+        nation: u16,
+        building: Building,
     },
     /// Déclare la guerre à une autre nation.
     DeclareWar { nation: u16, target: u16 },
@@ -94,6 +116,13 @@ pub enum Event {
     },
     /// Une technologie a été débloquée (nouveau palier d'une branche).
     Researched { nation: u16, branch: u8, tier: u8 },
+    /// Un bâtiment a été construit (S8 — économie interne).
+    Built {
+        x: u32,
+        y: u32,
+        nation: u16,
+        building: Building,
+    },
     /// De la population a été mobilisée en force militaire.
     Mobilized {
         nation: u16,
