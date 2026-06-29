@@ -32,8 +32,10 @@ pub struct Nation {
     pub materials: i64,
     /// Influence : +1/mois de base ; étendre le territoire.
     pub influence: i64,
-    /// Habitation : produite par le commerce ; loger/étendre la population (E5).
+    /// Habitation : produite par le commerce ; bâtir des villes (E6).
     pub housing: i64,
+    /// Nourriture : produite par les fermes ; nourrit la population (E6).
+    pub food: i64,
 }
 
 impl Nation {
@@ -46,6 +48,7 @@ impl Nation {
             materials: 0,
             influence: 0,
             housing: 0,
+            food: 0,
         }
     }
 }

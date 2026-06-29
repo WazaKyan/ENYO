@@ -1,5 +1,30 @@
 # ENYO — Économie interne (S8) : plan
 
+## RÉVISION (clarification du 28/06) — territoire ≠ villes
+
+- **Territoire** = les cases possédées : la **zone** où l'on bâtit et où s'accumule
+  l'**influence**. L'**expansion** étend le territoire et coûte de l'influence
+  (l'ancien « essaimer » est renommé **« Étendre »**).
+- **Ville = un type de BÂTIMENT** (pas le territoire). Coûte **habitation + argent**.
+  **Produit de la population**, **consomme de la nourriture**. C'est la « case
+  d'habitation » à laquelle les autres bâtiments se connectent.
+- **Ferme** = bâtiment : **produit de la nourriture** (rendement ∝ terrain :
+  humidité/pluie, température, sol), coûte matériaux + argent, exige une population
+  connectée. ✅ **fait (tranche A)**.
+- **Nourriture** = nouvelle ressource. ✅ fait.
+- **Croissance de la population : VILLES UNIQUEMENT + FAMINE** (choix joueur) — la
+  population ne croît que sur les cases **Ville** (nourries) ; toute la population
+  **mange de la nourriture** chaque mois ; sans fermes suffisantes → **déclin
+  (famine)**. Remplace l'urbanisation auto d'E5. ⏳ **tranche B** (refonte : touche
+  S1 et l'IA — l'IA doit bâtir villes + fermes).
+
+> Le reste du document décrit la conception initiale ; en cas de divergence, la
+> section RÉVISION ci-dessus prime.
+
+---
+
+
+
 > Document de design. Fait autorité avec `PLAN.md` / `docs/GAMEPLAY.md` / `CLAUDE.md`.
 > Statut : **proposé**. Implémentation par tranches verticales testées (§8).
 > Toute décision qui change ici se répercute dans `PLAN.md` au même commit.

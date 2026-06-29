@@ -61,6 +61,8 @@ const EDUCATION_UPKEEP: i64 = 3;
 const SOLDIERS_BASE: f32 = 20.0;
 /// Entretien mensuel (argent) d'une caserne ; impayé → pas de recrutement.
 const MILITARY_UPKEEP: i64 = 4;
+/// Nourriture/mois d'une ferme idéale (main-d'œuvre pleine) ; ∝ terrain (E6).
+const FARM_BASE: f32 = 12.0;
 
 /// L'état complet de la partie — reconstructible depuis une graine et une suite
 /// de commandes (donc rejouable).
@@ -661,6 +663,7 @@ impl World {
         let mut money_gain = vec![0i64; self.nations.len()];
         let mut housing_gain = vec![0i64; self.nations.len()];
         let mut science_gain = vec![0.0f32; self.nations.len()];
+        let mut food_gain = vec![0i64; self.nations.len()];
         for y in 0..height {
             for x in 0..width {
                 let idx = y as usize * width as usize + x as usize;
@@ -720,6 +723,11 @@ impl World {
                         let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
                         self.tiles[idx].force += SOLDIERS_BASE * workforce;
                     }
+                    // Ferme : produit de la nourriture ∝ terrain (humidité, chaleur,
+                    // sol) × main-d'œuvre connectée × (1 − dévastation).
+                    Building::Farm => {
+                        food_gain[ni] += farm_output(&self.tiles[idx], cpop);
+                    }
                     // Infrastructure connecte (aucun produit) ; bâtiments à l'arrêt.
                     _ => {}
                 }
@@ -730,6 +738,7 @@ impl World {
             self.nations[i].money += money_gain[i];
             self.nations[i].housing += housing_gain[i];
             self.nations[i].knowledge += science_gain[i];
+            self.nations[i].food += food_gain[i];
         }
 
         // Urbanisation (E5) : l'habitation (produite par le commerce) comble les
@@ -823,6 +832,7 @@ impl World {
                 Some(proto::Building::Infrastructure) => 5,
                 Some(proto::Building::Education) => 6,
                 Some(proto::Building::Military) => 7,
+                Some(proto::Building::Farm) => 8,
             };
             h = h.wrapping_mul(FNV_PRIME);
         }
@@ -840,6 +850,8 @@ impl World {
             h ^= n.influence as u64;
             h = h.wrapping_mul(FNV_PRIME);
             h ^= n.housing as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+            h ^= n.food as u64;
             h = h.wrapping_mul(FNV_PRIME);
         }
         for &(a, b) in self.diplomacy.wars() {
@@ -871,6 +883,7 @@ pub fn build_cost(b: Building) -> (i64, i64) {
         Building::Infrastructure => (40, 20),
         Building::Education => (150, 30),
         Building::Military => (120, 40),
+        Building::Farm => (80, 15),
     }
 }
 
@@ -885,6 +898,22 @@ fn industry_output(t: &Tile, connected_pop: f32) -> i64 {
 /// Rendement d'industrie à partir des scalaires (pur, testable, formule gelée).
 pub(crate) fn industry_yield(terrain: f32, workforce: f32, dev: f32) -> i64 {
     (INDUSTRY_BASE * terrain * workforce * (1.0 - dev))
+        .max(0.0)
+        .round() as i64
+}
+
+/// Nourriture/mois d'une ferme : ∝ terrain agricole (sol, humidité/pluie, chaleur)
+/// × main-d'œuvre connectée × (1 − dévastation). Entier (déterminisme).
+fn farm_output(t: &Tile, connected_pop: f32) -> i64 {
+    let warmth = ((t.temperature + 10.0) / 40.0).clamp(0.0, 1.0);
+    let terrain = (t.soil_fertility + t.precip_now + warmth) / 3.0;
+    let workforce = (connected_pop / INDUSTRY_WORKFORCE).min(1.0);
+    farm_yield(terrain, workforce, t.devastation)
+}
+
+/// Rendement de ferme à partir des scalaires (pur, testable, formule gelée).
+pub(crate) fn farm_yield(terrain: f32, workforce: f32, dev: f32) -> i64 {
+    (FARM_BASE * terrain * workforce * (1.0 - dev))
         .max(0.0)
         .round() as i64
 }
@@ -962,5 +991,13 @@ mod tests {
         assert_eq!(build_cost(Building::Infrastructure), (40, 20));
         assert_eq!(build_cost(Building::Education), (150, 30));
         assert_eq!(build_cost(Building::Military), (120, 40));
+        assert_eq!(build_cost(Building::Farm), (80, 15));
+    }
+
+    #[test]
+    fn farm_yield_frozen() {
+        assert_eq!(farm_yield(1.0, 1.0, 0.0), 12); // FARM_BASE
+        assert_eq!(farm_yield(0.5, 1.0, 0.0), 6);
+        assert_eq!(farm_yield(1.0, 0.0, 0.0), 0); // sans main-d'œuvre -> rien
     }
 }

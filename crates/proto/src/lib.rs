@@ -20,6 +20,8 @@ pub enum Building {
     Education,
     /// Génère des soldats (force) ; entretien mensuel.
     Military,
+    /// Produit de la nourriture (rendement ∝ terrain : humidité, température…).
+    Farm,
 }
 
 /// Une action demandée à la simulation.

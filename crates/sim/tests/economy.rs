@@ -413,6 +413,51 @@ fn housing_urbanizes_population() {
 }
 
 #[test]
+fn farm_produces_food() {
+    let mut w = World::new(23, 80, 60);
+    let [a, b, _] = three_land_in_row(&w);
+    w.apply(Command::Settle {
+        x: a.0,
+        y: a.1,
+        nation: 0,
+        population: 1500,
+    });
+    w.apply(Command::Settle {
+        x: b.0,
+        y: b.1,
+        nation: 0,
+        population: 1500,
+    });
+    // Industrie sur B pour les matériaux de la ferme (15).
+    w.apply(Command::Build {
+        x: b.0,
+        y: b.1,
+        nation: 0,
+        building: Building::Industry,
+    });
+    for _ in 0..15 {
+        w.apply(Command::Step);
+    }
+    let ev = w.apply(Command::Build {
+        x: a.0,
+        y: a.1,
+        nation: 0,
+        building: Building::Farm,
+    });
+    assert!(matches!(ev[0], Event::Built { .. }), "ferme bâtie");
+    let f0 = w.nation(0).unwrap().food;
+    for _ in 0..10 {
+        w.apply(Command::Step);
+    }
+    assert!(
+        w.nation(0).unwrap().food > f0,
+        "la ferme produit de la nourriture ({} -> {})",
+        f0,
+        w.nation(0).unwrap().food
+    );
+}
+
+#[test]
 fn build_rejected_when_unaffordable_or_invalid() {
     let mut w = World::new(7, 80, 60);
     let (x, y) = productive(&w);

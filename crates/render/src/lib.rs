@@ -370,6 +370,7 @@ fn building_color(b: Building) -> [u8; 3] {
         Building::Infrastructure => [150, 150, 156], // gris (routes)
         Building::Education => [180, 96, 206],       // violet (savoir)
         Building::Military => [206, 64, 60],         // rouge (armée)
+        Building::Farm => [216, 196, 70],            // jaune (récolte)
     }
 }
 

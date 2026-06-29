@@ -147,7 +147,7 @@ impl Input {
 }
 
 /// Touches surveillées chaque frame (pour bâtir l'Input depuis la fenêtre).
-const WATCH: [Key; 27] = [
+const WATCH: [Key; 28] = [
     Key::A,
     Key::D,
     Key::W,
@@ -169,6 +169,7 @@ const WATCH: [Key; 27] = [
     Key::R,
     Key::U,
     Key::K,
+    Key::Y,
     Key::Space,
     Key::Key0,
     Key::Key1,
@@ -752,8 +753,9 @@ impl App {
         let year = world.turn / 12;
         let month = world.turn % 12 + 1;
         let house = n.map(|n| n.housing).unwrap_or(0);
+        let foodr = n.map(|n| n.food).unwrap_or(0);
         self.stats = format!(
-            "An {year} M{month:02} N{}  {pop:.0}h {tiles}c {prov}p  |  argent {money}  mat {mat}  hab {house}  infl {infl}  sci {kn:.0}",
+            "An {year} M{month:02} N{}  {pop:.0}h {tiles}c {prov}p  |  argent {money}  mat {mat}  nour {foodr}  hab {house}  infl {infl}  sci {kn:.0}",
             self.player
         );
     }
@@ -860,6 +862,7 @@ impl App {
                 (Key::R, Tool::Build(Building::Infrastructure)),
                 (Key::U, Tool::Build(Building::Education)),
                 (Key::K, Tool::Build(Building::Military)),
+                (Key::Y, Tool::Build(Building::Farm)),
             ] {
                 if input.key_pressed(k) {
                     self.set_tool(t);
@@ -1256,6 +1259,7 @@ impl App {
                 ("Infrastructure", Building::Infrastructure),
                 ("Education", Building::Education),
                 ("Militaire", Building::Military),
+                ("Ferme", Building::Farm),
             ] {
                 let bw = gui::text_w(lbl, 2) + 18;
                 v.push((GameBtn::Tool(Tool::Build(b)), Button::new(x, row2, bw, tbh, lbl)));
@@ -1411,6 +1415,7 @@ impl App {
             Tool::Build(Building::Infrastructure) => "Infrastructure",
             Tool::Build(Building::Education) => "Education",
             Tool::Build(Building::Military) => "Militaire",
+            Tool::Build(Building::Farm) => "Ferme",
         };
         let tech = self
             .world
@@ -1565,6 +1570,7 @@ fn building_fr(b: Building) -> &'static str {
         Building::Infrastructure => "Infrastructure",
         Building::Education => "Education",
         Building::Military => "Militaire",
+        Building::Farm => "Ferme",
     }
 }
 
