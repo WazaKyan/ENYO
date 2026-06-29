@@ -977,11 +977,15 @@ pub fn spawn_nations(world: &World, count: u16, player: u16) -> Vec<Command> {
     let n = placed.len() as u16;
     for (i, (x, y)) in placed.into_iter().enumerate() {
         let nation = i as u16;
+        // Démarrage à 1500 hab (= seuil de subsistance, donc pas de famine d'emblée,
+        // et ≥ 1000 = seuil d'expansion) : la nation peut **s'étendre dès le tour 0**
+        // sans attendre ~25 mois que la ville monte de 300 à 1000. Vaut pour le
+        // joueur ET les IA (symétrique).
         out.push(Command::Settle {
             x,
             y,
             nation,
-            population: 300,
+            population: 1500,
         });
         // La case d'implantation devient une VILLE : la population ne croît que sur
         // les villes, donc chaque nation démarre avec un foyer en croissance.

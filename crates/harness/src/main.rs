@@ -84,7 +84,7 @@ fn main() {
                 x,
                 y,
                 nation: 0,
-                population: 300,
+                population: 1500, // cohérent avec spawn_nations (expansion dès le tour 0)
             },
         );
         // La case d'implantation devient une ville (la population ne croît que sur

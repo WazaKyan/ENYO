@@ -64,7 +64,10 @@
   ≥ `HOSPITABLE_CAP = 1500`, pour croître au-delà de 1000 et s'étendre — pas de
   soft-lock), **tirée aléatoirement mais de façon seedée** (même graine ⇒ même
   placement ⇒ rejeu identique). `spawn_nations` y **fonde une ville** (départ avec
-  `STARTING_HOUSING = 60`).
+  `STARTING_HOUSING = 60`) peuplée d'emblée à **1500 hab** (= seuil de subsistance,
+  donc pas de famine instantanée, et ≥ 1000 = seuil d'expansion) : la nation peut
+  **s'étendre dès le tour 0** au lieu d'attendre ~25 mois que la ville monte de 300 à
+  1000. Vaut pour le joueur ET les IA.
 - **IA — développement économique stratégique** (un bâtiment/tour, déterministe) :
   au lieu d'une chaîne figée, l'IA choisit le **bâtiment le plus utile** et la
   **meilleure case** selon sa situation. Souhaits ordonnés : amorcer chaque maillon
