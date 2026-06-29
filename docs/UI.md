@@ -38,7 +38,10 @@ Fenêtre 1280×720, upscale nearest (pixel-art).
 ## Mapping UI → Commande
 - `[Fin de tour]` / Espace → `Step` (puis Directeur + IA, comme le harness)
 - Outil **Fonder** (S) + clic terre → `Settle{ x, y, nation: player, 300 }`
-- Outil **Essaimer** (E) + clic source→cible → `Swarm{ from, to }`
+- Outil **Étendre** (E) → `Swarm{ from, to }`. **Clic sur une case LIBRE** : la source
+  est trouvée auto (ville voisine ≥ 1000 hab du joueur) — un seul clic, comme l'IA. On
+  peut aussi cliquer d'abord **une de ses villes ≥ 1000 hab** (source explicite) puis la
+  cible. Rejet explicite si pas de source valide.
 - Outil **Mobiliser** (M) + clic (montant molette) → `Mobilize{ x, y, player, amount }`
 - Outil **Marcher** (A) + clic source→case adjacente → `March{ from, to }`
 - Panneau Tech (1–4) → `Research{ player, branch }`

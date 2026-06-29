@@ -6,7 +6,7 @@
 //! TEMPS RÉEL : le monde avance seul selon la vitesse (Pause / ×1 / ×2 / ×4 /
 //! Max, boutons en bas). L'horloge murale est confinée ici (`RealtimeClock`),
 //! `sim` ne la voit jamais → déterminisme/rejeu intacts (1 tick = 1 mois).
-//! Espace = lecture / pause. clic = inspecter / agir · E = Étendre (2 clics) ·
+//! Espace = lecture / pause. clic = inspecter / agir · E = Étendre (clic case libre) ·
 //! V = Ville · M = Unités · G = Guerre · P = Paix (clic sur case ennemie) ·
 //! N = inspecter · 1-4 = recherche (mode Jeu) · WASD = bouger · molette = zoom ·
 //! Échap = menu.
@@ -1188,6 +1188,28 @@ impl App {
         }
     }
 
+    /// Source automatique pour « Étendre » : une case possédée par le joueur, à
+    /// ≥ 1000 hab, **adjacente** à la cible (le joueur vise la case libre, la ville
+    /// source est trouvée toute seule — comme l'IA). Ordre des voisins fixe.
+    fn adjacent_source(&self, tx: u32, ty: u32) -> Option<(u32, u32)> {
+        let w = self.world.as_ref()?;
+        let player = self.player;
+        let (width, height) = (w.width as i64, w.height as i64);
+        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+            let nx = (tx as i64 + dx).rem_euclid(width);
+            let ny = ty as i64 + dy;
+            if ny < 0 || ny >= height {
+                continue;
+            }
+            let (nx, ny) = (nx as u32, ny as u32);
+            let t = w.tile(nx, ny);
+            if t.owner == Some(player) && t.population >= 1000.0 {
+                return Some((nx, ny));
+            }
+        }
+        None
+    }
+
     fn map_click(&mut self, mx: i32, my: i32, w: i32, h: i32) {
         let (tx, ty) = {
             let Some(world) = self.world.as_ref() else {
@@ -1210,7 +1232,13 @@ impl App {
         let owner = self.world.as_ref().and_then(|w| w.tile(tx, ty).owner);
         match self.tool {
             Tool::Swarm => {
+                let (here_owner, here_pop) = self
+                    .world
+                    .as_ref()
+                    .map(|w| (w.tile(tx, ty).owner, w.tile(tx, ty).population))
+                    .unwrap_or((None, 0.0));
                 if let Some((sx, sy)) = self.pending_src.take() {
+                    // 2e clic : cible explicite depuis la source choisie.
                     let ev = self.apply(Command::Swarm {
                         from_x: sx,
                         from_y: sy,
@@ -1218,9 +1246,34 @@ impl App {
                         to_y: ty,
                     });
                     self.report(&ev);
-                } else {
+                } else if here_owner == Some(player) && here_pop >= 1000.0 {
+                    // Clic sur une de SES villes ≥ 1000 hab : source explicite.
                     self.pending_src = Some((tx, ty));
-                    self.last_msg = format!("source expansion ({tx},{ty}) - clique la cible");
+                    self.last_msg = format!("source ({tx},{ty}) — clique une case libre voisine");
+                } else if here_owner.is_none() {
+                    // Clic sur une case LIBRE : auto-source depuis une ville voisine
+                    // ≥ 1000 hab (comme l'IA : on vise la cible, la source est
+                    // trouvée toute seule). Un seul clic suffit.
+                    match self.adjacent_source(tx, ty) {
+                        Some((sx, sy)) => {
+                            let ev = self.apply(Command::Swarm {
+                                from_x: sx,
+                                from_y: sy,
+                                to_x: tx,
+                                to_y: ty,
+                            });
+                            self.report(&ev);
+                        }
+                        None => {
+                            self.last_msg =
+                                "Étendre : vise une case LIBRE voisine d'une de tes villes ≥ 1000 hab"
+                                    .to_string();
+                        }
+                    }
+                } else {
+                    self.last_msg =
+                        "Étendre : cible une case LIBRE (terre) à côté d'une ville ≥ 1000 hab"
+                            .to_string();
                 }
             }
             Tool::War => match owner {
@@ -1919,8 +1972,11 @@ fn tool_tooltip(t: Tool) -> Option<Vec<String>> {
         ],
         Tool::Swarm => vec![
             "Etendre".to_string(),
-            "Revendique une case voisine (2 clics).".to_string(),
-            format!("Coute {} influence ; source >= 1000 hab.", sim::SWARM_INFLUENCE),
+            "Clique une case LIBRE voisine d'une de tes villes >= 1000 hab.".to_string(),
+            format!(
+                "Cout {} influence ; la ville source perd la moitie de sa pop.",
+                sim::SWARM_INFLUENCE
+            ),
         ],
         Tool::Units => vec![
             "Unites".to_string(),
