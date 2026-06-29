@@ -250,6 +250,7 @@ Le LLM (DeepSeek) **ne contrôle pas directement les nations ennemies**. C'est u
 - **Phase 6 — Profondeur.** Diplomatie, militaire, économie avancée, culture/religion… selon le design retenu.
 - **Phase 7 — UI / visuel.**
 - **Phase 8 — Temps réel.** Passage du tour-par-tour au **temps réel** : horloge murale **confinée à `ui`** (accumulateur µs, pause + multiplicateurs de vitesse), **1 tick = 1 `Step` = 1 mois inchangé** → déterminisme, rejeu et headless **préservés par construction** (le `.rec` rejoue tel quel). Directeur LLM en worker asynchrone appliqué à un tick-deadline fixe. Plan détaillé, refactors par crate, pièges déterminisme et roadmap A→C : **`docs/REALTIME.md`**.
+- **Phase 9 — Économie interne (S8).** Cases spécialisées (industrie, commerce, infrastructure, éducation, militaire) reliées en **réseaux**, transformant des **ressources** (argent, matériaux, influence, science, habitation) ; production ∝ stats de case × **population connectée**, l'industrie **pollue**. Nouvelle **primitive de connexion** (union-find adjacence + réseau infra). Tech économiques. Plan détaillé + roadmap E1→E6 : **`docs/ECONOMY.md`**.
 
 ---
 
