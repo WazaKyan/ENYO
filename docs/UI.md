@@ -126,6 +126,13 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
   population** (village → bourg → cité → métropole : tours plus nombreuses/hautes).
   Planche d'aperçu : `harness --building-sheet f.png [--building-scale N]`. Repli
   pastille quand le zoom est trop petit (px < 6).
+- **Unités (S5) dans l'UI** : catégorie **Militaire** → recruter **Infanterie /
+  Archers / Cavalerie** (outil `Create`, clic sur une **caserne**) + outil **Unités**
+  (1er clic = sélectionner sa propre unité ; 2e clic = **déplacer** vers une case
+  vide ou **attaquer** une unité ennemie). Les unités sont **dessinées sur la carte**
+  (jeton à la couleur de la nation, forme par type : carré/triangle/losange, **barre
+  de PV**) ; l'unité sélectionnée est surlignée. Planche d'aperçu :
+  `harness --unit-sheet f.png`.
 
 ### Reste (D/E)
 - Équilibrage des vitesses croissance/recherche/tech.

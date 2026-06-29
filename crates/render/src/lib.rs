@@ -5,7 +5,7 @@
 //! pixel-art via un tileset, à venir).
 
 use image::{Rgb, RgbImage};
-use proto::Building;
+use proto::{Building, UnitKind};
 use sim::tile::{Biome, Tile, TileKind};
 use sim::World;
 
@@ -238,6 +238,19 @@ pub fn region(world: &World, x0: u32, y0: u32, w: u32, h: u32, px: u32) -> RgbIm
                 fill_block(&mut img, bx, by, s, s, [220, 40, 40]);
             }
         }
+    }
+
+    // Unités (S5) : dessinées PAR-DESSUS la carte, dans la fenêtre courante.
+    for u in &world.units {
+        if u.x < x0 || u.y < y0 || u.x >= x0 + w || u.y >= y0 + h {
+            continue;
+        }
+        let bx = (u.x - x0) * px;
+        let by = (u.y - y0) * px;
+        let col = NATION_COLORS[u.owner as usize % NATION_COLORS.len()];
+        let stats = sim::unit::unit_stats(u.kind);
+        let hp_frac = (u.hp as f32 / stats.max_hp as f32).clamp(0.0, 1.0);
+        draw_unit(&mut img, bx, by, px, u.kind, col, hp_frac);
     }
     img
 }
@@ -555,6 +568,65 @@ fn draw_fort(img: &mut RgbImage, bx: u32, by: u32, px: u32) {
     frect(img, bx, by, px, 0.20, 0.84, 0.60, 0.05, dark); // sol
 }
 
+/// Dessine une **unité** (S5) : un jeton à la couleur de sa nation, de forme
+/// distincte selon le type (infanterie = carré, archers = triangle, cavalerie =
+/// losange), surmonté d'une barre de PV.
+fn draw_unit(img: &mut RgbImage, bx: u32, by: u32, px: u32, kind: UnitKind, col: [u8; 3], hp: f32) {
+    let dark = [12, 12, 16];
+    let m = (px * 6 / 10).max(4);
+    let ox = bx + (px - m) / 2;
+    let oy = by + (px - m) / 2;
+    let cxx = ox + m / 2;
+    match kind {
+        UnitKind::Infantry => {
+            for yy in 0..m {
+                for xx in 0..m {
+                    let edge = xx == 0 || yy == 0 || xx == m - 1 || yy == m - 1;
+                    put(img, ox + xx, oy + yy, if edge { dark } else { col });
+                }
+            }
+        }
+        UnitKind::Archer => {
+            // Triangle pointe en haut.
+            for r in 0..m {
+                let half = r * (m / 2) / (m - 1).max(1);
+                for d in 0..=half {
+                    put(img, cxx.saturating_sub(d), oy + r, col);
+                    put(img, cxx + d, oy + r, col);
+                }
+                put(img, cxx.saturating_sub(half), oy + r, dark);
+                put(img, cxx + half, oy + r, dark);
+            }
+        }
+        UnitKind::Cavalry => {
+            // Losange.
+            for r in 0..m {
+                let half = if r <= m / 2 { r } else { m.saturating_sub(1) - r };
+                for d in 0..=half {
+                    put(img, cxx.saturating_sub(d), oy + r, col);
+                    put(img, cxx + d, oy + r, col);
+                }
+                put(img, cxx.saturating_sub(half), oy + r, dark);
+                put(img, cxx + half, oy + r, dark);
+            }
+        }
+    }
+    // Barre de PV au-dessus du jeton.
+    if px >= 8 {
+        let by2 = oy.saturating_sub(3);
+        fill_block(img, ox, by2, m, 2, [40, 40, 40]);
+        let fillw = ((m as f32) * hp.clamp(0.0, 1.0)) as u32;
+        let hpc = if hp > 0.5 {
+            [70, 200, 80]
+        } else if hp > 0.25 {
+            [220, 200, 60]
+        } else {
+            [220, 60, 50]
+        };
+        fill_block(img, ox, by2, fillw.max(1), 2, hpc);
+    }
+}
+
 /// Pose un pixel (borné à l'image).
 fn put(img: &mut RgbImage, x: u32, y: u32, c: [u8; 3]) {
     if x < img.width() && y < img.height() {
@@ -717,6 +789,37 @@ pub fn building_sheet(px: u32) -> RgbImage {
 /// Rend la planche des bâtiments et la sauvegarde en PNG.
 pub fn save_building_sheet(px: u32, path: &str) -> Result<(), String> {
     building_sheet(px)
+        .save_with_format(path, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())
+}
+
+/// Planche des **unités** (asset visuel) : chaque type (infanterie/archers/
+/// cavalerie) en 2 couleurs de nation, avec barre de PV (pleine puis entamée).
+pub fn unit_sheet(px: u32) -> RgbImage {
+    let px = px.max(16);
+    let grass = sample(TileKind::Land, Biome::Grassland, 0.6);
+    let kinds = [UnitKind::Infantry, UnitKind::Archer, UnitKind::Cavalry];
+    let (cols, rows, gap) = (3u32, 2u32, 6u32);
+    let mut img = RgbImage::new(cols * (px + gap) + gap, rows * (px + gap) + gap);
+    for p in img.pixels_mut() {
+        *p = Rgb([18, 18, 22]);
+    }
+    for owner in 0u32..rows {
+        for (c, kind) in kinds.iter().enumerate() {
+            let cx = c as u32 * (px + gap) + gap;
+            let cy = owner * (px + gap) + gap;
+            draw_tile(&mut img, cx, cy, px, &grass);
+            let col = NATION_COLORS[owner as usize % NATION_COLORS.len()];
+            let hp = if owner == 0 { 1.0 } else { 0.45 }; // 2e nation : PV entamés
+            draw_unit(&mut img, cx, cy, px, *kind, col, hp);
+        }
+    }
+    img
+}
+
+/// Rend la planche des unités et la sauvegarde en PNG.
+pub fn save_unit_sheet(px: u32, path: &str) -> Result<(), String> {
+    unit_sheet(px)
         .save_with_format(path, image::ImageFormat::Png)
         .map_err(|e| e.to_string())
 }

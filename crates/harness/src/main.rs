@@ -217,6 +217,12 @@ fn main() {
             Err(e) => eprintln!("échec planche bâtiments: {e}"),
         }
     }
+    if let Some(path) = &args.unit_sheet {
+        match render::save_unit_sheet(args.building_scale, path) {
+            Ok(()) => println!("planche unités écrite: {path}"),
+            Err(e) => eprintln!("échec planche unités: {e}"),
+        }
+    }
 
     print_summary(&world, &actors, args.settle.is_some());
     if args.audit {
@@ -529,6 +535,7 @@ struct Args {
     tileset_scale: u32,
     building_sheet: Option<String>,
     building_scale: u32,
+    unit_sheet: Option<String>,
     gif: Option<String>,
     contact: Option<String>,
     frame_every: u32,
@@ -564,6 +571,7 @@ impl Args {
             tileset_scale: 16,
             building_sheet: None,
             building_scale: 48,
+            unit_sheet: None,
             gif: None,
             contact: None,
             frame_every: 0,
@@ -641,6 +649,7 @@ impl Args {
                         a.building_scale = v;
                     }
                 }
+                "--unit-sheet" => a.unit_sheet = it.next(),
                 "--gif" => a.gif = it.next(),
                 "--contact" => a.contact = it.next(),
                 "--frame-every" => {

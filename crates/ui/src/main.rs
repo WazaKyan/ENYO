@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use gui::{Button, Canvas};
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
-use proto::{Building, Command, Event};
+use proto::{Building, Command, Event, UnitKind};
 use sim::World;
 
 const TOP_H: i32 = 40;
@@ -67,6 +67,10 @@ enum Tool {
     Peace,
     /// Bâtir un bâtiment (S8) sur la case cliquée.
     Build(Building),
+    /// Recruter une unité (S5) sur la caserne cliquée.
+    Create(UnitKind),
+    /// Contrôle des unités : 1er clic = sélection ; 2e clic = déplacer / attaquer.
+    Units,
 }
 
 /// Catégorie de l'interface de jeu : un **sous-menu** qui regroupe ses outils
@@ -83,7 +87,7 @@ enum Category {
 fn category_of(t: Tool) -> Option<Category> {
     match t {
         Tool::Found | Tool::Swarm => Some(Category::Economy),
-        Tool::Mobilize | Tool::March => Some(Category::Military),
+        Tool::Mobilize | Tool::March | Tool::Create(_) | Tool::Units => Some(Category::Military),
         Tool::War | Tool::Peace => Some(Category::Diplomacy),
         Tool::Build(Building::Military) => Some(Category::Military),
         Tool::Build(_) => Some(Category::Economy),
@@ -256,6 +260,8 @@ struct App {
     tool: Tool,
     cat: Category,
     selected: Option<(u32, u32)>,
+    /// Unité sélectionnée (id) pour le contrôle (déplacer / attaquer).
+    selected_unit: Option<u32>,
     pending_src: Option<(u32, u32)>,
     speed: u32,
     last_instant: Option<Instant>,
@@ -563,6 +569,7 @@ impl App {
             tool: Tool::None,
             cat: Category::Economy,
             selected: None,
+            selected_unit: None,
             pending_src: None,
             speed: 0,
             last_instant: None,
@@ -658,6 +665,7 @@ impl App {
         self.tool = Tool::None;
         self.cat = Category::Economy;
         self.selected = None;
+        self.selected_unit = None;
         self.pending_src = None;
         self.speed = if spectator { 1 } else { 0 }; // Jouer = départ en pause
         self.last_instant = None;
@@ -1052,6 +1060,10 @@ impl App {
             self.cat = c;
         }
         self.pending_src = None;
+        // Quitter le contrôle d'unités désélectionne l'unité courante.
+        if !matches!(t, Tool::Units) {
+            self.selected_unit = None;
+        }
     }
 
     fn research(&mut self, branch: u8) {
@@ -1199,6 +1211,63 @@ impl App {
                 });
                 self.report(&ev);
             }
+            Tool::Create(kind) => {
+                let ev = self.apply(Command::CreateUnit {
+                    x: tx,
+                    y: ty,
+                    nation: player,
+                    kind,
+                });
+                self.report(&ev);
+            }
+            Tool::Units => {
+                // Unité présente sur la case cliquée (id, propriétaire) ?
+                let hit = self.world.as_ref().and_then(|w| {
+                    w.units
+                        .iter()
+                        .find(|u| u.x == tx && u.y == ty)
+                        .map(|u| (u.id, u.owner))
+                });
+                match (self.selected_unit, hit) {
+                    // Sélection d'une de ses unités.
+                    (_, Some((id, o))) if o == player => {
+                        self.selected_unit = Some(id);
+                        self.last_msg = format!("unite {id} selectionnee - clique ou aller / qui attaquer");
+                    }
+                    // Unité sélectionnée + clic sur une case ennemie occupee -> attaque.
+                    (Some(sel), Some(_)) => {
+                        let ev = self.apply(Command::AttackUnit {
+                            unit: sel,
+                            x: tx,
+                            y: ty,
+                        });
+                        self.report(&ev);
+                    }
+                    // Unité sélectionnée + case vide -> déplacement.
+                    (Some(sel), None) => {
+                        let ev = self.apply(Command::MoveUnit {
+                            unit: sel,
+                            to_x: tx,
+                            to_y: ty,
+                        });
+                        self.report(&ev);
+                    }
+                    (None, _) => {
+                        self.last_msg = "clique une de tes unites".to_string();
+                    }
+                }
+                // L'unité sélectionnée a pu mourir (riposte) -> désélectionner.
+                if let Some(sel) = self.selected_unit {
+                    let alive = self
+                        .world
+                        .as_ref()
+                        .map(|w| w.units.iter().any(|u| u.id == sel))
+                        .unwrap_or(false);
+                    if !alive {
+                        self.selected_unit = None;
+                    }
+                }
+            }
             Tool::None => {}
         }
     }
@@ -1316,9 +1385,13 @@ impl App {
                     push_tool(&mut v, &mut x, "Education", Tool::Build(Building::Education));
                 }
                 Category::Military => {
+                    push_tool(&mut v, &mut x, "Unites", Tool::Units);
+                    push_tool(&mut v, &mut x, "Infanterie", Tool::Create(UnitKind::Infantry));
+                    push_tool(&mut v, &mut x, "Archers", Tool::Create(UnitKind::Archer));
+                    push_tool(&mut v, &mut x, "Cavalerie", Tool::Create(UnitKind::Cavalry));
+                    push_tool(&mut v, &mut x, "Caserne", Tool::Build(Building::Military));
                     push_tool(&mut v, &mut x, "Mobiliser", Tool::Mobilize);
                     push_tool(&mut v, &mut x, "Marcher", Tool::March);
-                    push_tool(&mut v, &mut x, "Caserne", Tool::Build(Building::Military));
                 }
                 Category::Diplomacy => {
                     push_tool(&mut v, &mut x, "Guerre", Tool::War);
@@ -1476,6 +1549,10 @@ impl App {
             Tool::Build(Building::Education) => "Education",
             Tool::Build(Building::Military) => "Caserne",
             Tool::Build(Building::Farm) => "Ferme",
+            Tool::Create(UnitKind::Infantry) => "Infanterie",
+            Tool::Create(UnitKind::Archer) => "Archers",
+            Tool::Create(UnitKind::Cavalry) => "Cavalerie",
+            Tool::Units => "Unites",
         };
         let tech = self
             .world
@@ -1499,6 +1576,13 @@ impl App {
             };
             mark(&mut c, self.pending_src, gui::GOOD);
             mark(&mut c, self.selected, gui::TEXT);
+            // Surbrillance de l'unité sélectionnée (cyan).
+            let sel_unit_pos = self.selected_unit.and_then(|id| {
+                self.world
+                    .as_ref()
+                    .and_then(|w| w.units.iter().find(|u| u.id == id).map(|u| (u.x, u.y)))
+            });
+            mark(&mut c, sel_unit_pos, 0x66_E0FF);
 
             // Barre du haut.
             c.fill_rect(0, 0, w, TOP_H, gui::PANEL);
