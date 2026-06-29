@@ -1,5 +1,22 @@
 # ENYO — Économie interne (S8) : plan
 
+## RÉVISION (30/06) — villes/population d'abord + grosse passe de PERF
+
+- **IA priorise les VILLES (population)** : la pop ne croît que sur les villes →
+  l'IA en bâtit **le plus possible** (ville en priorité haute, nourrie ~1 ferme/ville),
+  avec juste assez d'industrie/commerce (≈ 1 / 2 villes) et **moins d'unités**
+  (plafond de recrutement ramené de `2× territoire (max 40)` à `territoire (max 12)`).
+  Résultat : la ville devient le bâtiment le plus construit ; population totale ↑.
+- **PERF (lag « beaucoup d'unités » corrigé)** — l'échelle réelle (800×500, 10 IA,
+  150 t) passe de **~74 s à ~30 s** (2,5×), rejeu identique. Correctifs : (a)
+  `sim::path::reach_cost_with` utilise une **HashMap bornée** au lieu d'allouer
+  `vec![400 000]` à chaque déplacement d'unité (le point chaud n°1) ; (b) **index
+  d'occupation O(1)** dans le pathfinding IA (supprime un coût O(U²)) ; (c) `plan`
+  fait **UN seul passage grille** (ancres + cases possédées + cases ennemies)
+  réutilisé par economy/expansion/military (au lieu de ~5 scans O(400k)/nation) ;
+  (d) plafonds de recherche Dijkstra des unités **resserrés** (1000) + moins d'unités.
+  Plancher restant ≈ la résolution du monde sur 400k cases (~50 ms/tour).
+
 ## RÉVISION (29/06) — influence ∝ taille + IA stratège
 
 - **Influence = flux ∝ territoire + population** (et non plus `+1/mois` forfaitaire) :

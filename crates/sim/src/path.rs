@@ -4,7 +4,7 @@
 //! parfait du replay/audit (cf. contrat dans `CLAUDE.md`). Enroulement sur X.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 
 use crate::tile::{Tile, TileKind};
 
@@ -79,8 +79,13 @@ pub fn reach_cost_with<F: Fn(&Tile) -> u32>(
     if from == to {
         return Some(0);
     }
-    let mut dist = vec![u32::MAX; tiles.len()];
-    dist[from] = 0;
+    // `dist` en HashMap (et NON `vec![u32::MAX; tiles.len()]`) : la recherche est
+    // **bornée** par `budget` (`d >= budget` coupe l'expansion), donc seule une
+    // petite région autour de `from` est explorée. Allouer/zéroer 400 000 cases à
+    // CHAQUE déplacement d'unité était le principal point chaud de perf (lag avec
+    // beaucoup d'unités). Lookups seulement (jamais d'itération) → rejeu identique.
+    let mut dist: HashMap<usize, u32> = HashMap::new();
+    dist.insert(from, 0);
     let mut heap = BinaryHeap::new();
     heap.push(Reverse((0u32, from)));
 
@@ -88,7 +93,7 @@ pub fn reach_cost_with<F: Fn(&Tile) -> u32>(
         if u == to {
             return Some(d);
         }
-        if d > dist[u] || d >= budget {
+        if d >= budget || d > *dist.get(&u).unwrap_or(&u32::MAX) {
             continue;
         }
         for nb in neighbors(u, width, height).into_iter().flatten() {
@@ -97,8 +102,8 @@ pub fn reach_cost_with<F: Fn(&Tile) -> u32>(
                 continue;
             }
             let nd = d.saturating_add(c);
-            if nd <= budget && nd < dist[nb] {
-                dist[nb] = nd;
+            if nd <= budget && nd < *dist.get(&nb).unwrap_or(&u32::MAX) {
+                dist.insert(nb, nd);
                 heap.push(Reverse((nd, nb)));
             }
         }
