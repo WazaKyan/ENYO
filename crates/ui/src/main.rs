@@ -246,6 +246,9 @@ struct App {
     cam_x: u32,
     cam_y: u32,
     px: u32,
+    /// Reliquat sous-tuile du glissé caméra (clic droit) — pixels accumulés.
+    pan_acc_x: i32,
+    pan_acc_y: i32,
     tool: Tool,
     cat: Category,
     selected: Option<(u32, u32)>,
@@ -295,6 +298,9 @@ fn main() {
         }
     }
     let mut mouse_was_down = false;
+    // Pan caméra au clic droit maintenu (glisser-déplacer).
+    let mut right_was_down = false;
+    let (mut prev_mx, mut prev_my) = (0i32, 0i32);
 
     loop {
         let fs = app.config.fullscreen;
@@ -330,6 +336,17 @@ fn main() {
             mouse_was_down = down;
             let scroll = window.get_scroll_wheel().map(|(_, y)| y).unwrap_or(0.0);
             let (wi, hi) = (w as i32, h as i32);
+
+            // Clic droit maintenu = déplacer librement la caméra (glisser).
+            let right_down = window.get_mouse_down(MouseButton::Right);
+            if right_down && !right_was_down {
+                app.pan_reset(); // début du glissé : repart d'un offset propre
+            } else if right_down && right_was_down {
+                app.pan_drag(mx - prev_mx, my - prev_my);
+            }
+            right_was_down = right_down;
+            prev_mx = mx;
+            prev_my = my;
 
             let input = gather_input(&window, mx, my, click, scroll);
             app.handle(&input, wi, hi);
@@ -557,6 +574,8 @@ impl App {
             spectator: false,
             cam_x: 400,
             cam_y: 250,
+            pan_acc_x: 0,
+            pan_acc_y: 0,
             px: args.px,
             tool: Tool::None,
             cat: Category::Economy,
@@ -864,6 +883,48 @@ impl App {
                 }
                 return;
             }
+        }
+    }
+
+    /// Début d'un cliqué-glissé droit : on repart d'un reliquat propre pour
+    /// éviter tout saut hérité d'un glissé précédent.
+    fn pan_reset(&mut self) {
+        self.pan_acc_x = 0;
+        self.pan_acc_y = 0;
+    }
+
+    /// Glisser-déplacer la caméra au clic droit maintenu : on « attrape » la
+    /// carte, qui suit le curseur (la caméra va donc à l'inverse du mouvement
+    /// souris). `dpx`/`dpy` = déplacement souris en pixels depuis la frame
+    /// précédente ; on convertit en tuiles via `px` (pixels/tuile) et on garde
+    /// le reliquat sous-tuile pour un défilement fluide.
+    fn pan_drag(&mut self, dpx: i32, dpy: i32) {
+        if self.screen != Screen::Game {
+            return;
+        }
+        let (ww, wh) = self
+            .world
+            .as_ref()
+            .map(|w| (w.width, w.height))
+            .unwrap_or((800, 500));
+        let step = self.px.max(1) as i32; // pixels par tuile
+        self.pan_acc_x += dpx;
+        self.pan_acc_y += dpy;
+        while self.pan_acc_x >= step {
+            self.cam_x = self.cam_x.saturating_sub(1);
+            self.pan_acc_x -= step;
+        }
+        while self.pan_acc_x <= -step {
+            self.cam_x = (self.cam_x + 1).min(ww.saturating_sub(1));
+            self.pan_acc_x += step;
+        }
+        while self.pan_acc_y >= step {
+            self.cam_y = self.cam_y.saturating_sub(1);
+            self.pan_acc_y -= step;
+        }
+        while self.pan_acc_y <= -step {
+            self.cam_y = (self.cam_y + 1).min(wh.saturating_sub(1));
+            self.pan_acc_y += step;
         }
     }
 

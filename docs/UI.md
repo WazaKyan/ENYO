@@ -25,7 +25,8 @@
 ## Interface (crate `ui`, consommateur de sim+render+proto)
 Fenêtre 1280×720, upscale nearest (pixel-art).
 - **Centre** : viewport carte = `render::region(world, cam_x, cam_y, cols, rows, px)`,
-  **pan** (drag / WASD / flèches), **zoom** molette (px ∈ {8,12,16,20,24,32}).
+  **pan** (**clic droit maintenu = glisser librement** / WASD / flèches),
+  **zoom** molette (px ∈ {8,12,16,20,24,32}).
 - **Bas** : barre de tour — **[Fin de tour ▸] = `Step`**, mois/année (1 tour = 1 mois),
   vitesse spectateur Pause/×1/×2.
 - **Gauche** : panneau nation du joueur (pop, provinces, savoir, 4 paliers de tech, guerres).
@@ -80,7 +81,8 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
   Menu) + barre bas (outils Inspecter/Fonder/Essaimer, recherche E/T/F/L ou
   vitesse Pause/×1/×2 en spectateur) + panneau d'inspection au clic + message
   d'action (succès vert / **REJET** rouge — rien n'est silencieux côté joueur).
-  Souris **et** clavier (WASD, molette, Espace, F/E/N, 1-4, Échap).
+  Souris **et** clavier (clic gauche = agir, **clic droit maintenu = pan
+  caméra**, WASD/flèches, molette, Espace, F/E/N, 1-4, Échap).
 - **Visibilité agent** : `render::save_argb()` + `ui --headless --screen
   menu|settings|game --shot f.png` rend exactement l'écran en PNG → chaque écran
   est vérifiable sans ouvrir la fenêtre.
