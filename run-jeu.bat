@@ -24,5 +24,6 @@ echo    Spectateur   : regarde le monde tourner tout seul
 echo    Parametres   : graine, nations, zoom, plein ecran
 echo  Tout se fait a la souris ; les commandes clavier sont
 echo  affichees dans le jeu. (Echap = retour menu / quitter)
+echo  Ta partie est enregistree -> rejouable via run-rejeu.bat
 echo ============================================================
 "%CARGO%" run --release -q -p ui

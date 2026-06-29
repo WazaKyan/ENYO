@@ -833,6 +833,7 @@ dependencies = [
  "ai",
  "font8x8",
  "minifb",
+ "persist",
  "proto",
  "render",
  "sim",

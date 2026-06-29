@@ -185,6 +185,13 @@ struct App {
     last_msg: String,
     stats: String,
     stats_dirty: bool,
+
+    // enregistrement (audit total) / rejeu déterministe
+    record_path: Option<String>,
+    recorder: Option<persist::Recorder>,
+    replay_mode: bool,
+    replay_cmds: Vec<Command>,
+    replay_pos: usize,
 }
 
 fn main() {
@@ -198,6 +205,11 @@ fn main() {
         return;
     }
     let mut app = App::new(&args);
+    if let Some(p) = args.replay.clone() {
+        if !app.load_replay(&p) {
+            return;
+        }
+    }
     let mut mouse_was_down = false;
 
     loop {
@@ -248,25 +260,45 @@ fn main() {
 }
 
 /// Rend un seul écran en PNG, sans fenêtre (vérification visuelle headless).
+/// Avec `--replay`, rejoue tout l'enregistrement et imprime le checksum final
+/// (sert à vérifier que le rejeu reproduit la partie au bit près).
 fn run_headless(args: &Args) {
     let mut app = App::new(args);
     let (w, h) = (1280usize, 800usize);
     app.buf = vec![gui::BG; w * h];
     let (wi, hi) = (w as i32, h as i32);
-    match args.screen.as_str() {
-        "menu" => {
-            app.screen = Screen::Menu;
-            app.draw_menu(wi, hi, -1, -1);
+
+    if let Some(p) = args.replay.clone() {
+        if !app.load_replay(&p) {
+            return;
         }
-        "settings" => {
-            app.screen = Screen::Settings;
-            app.draw_settings(wi, hi, -1, -1);
+        app.replay_all();
+        if let Some(world) = app.world.as_ref() {
+            println!("rejeu: tour {} checksum {:016x}", world.turn, world.checksum());
         }
-        _ => {
-            app.start_game(args.spectator);
-            app.selected = Some((app.cam_x, app.cam_y)); // aperçu du panneau d'inspection
-            app.last_msg = "essaimage vers (402,250) +500 hab".to_string();
-            app.draw_game(wi, hi, -1, -1);
+        app.draw_game(wi, hi, -1, -1);
+    } else {
+        match args.screen.as_str() {
+            "menu" => {
+                app.screen = Screen::Menu;
+                app.draw_menu(wi, hi, -1, -1);
+            }
+            "settings" => {
+                app.screen = Screen::Settings;
+                app.draw_settings(wi, hi, -1, -1);
+            }
+            _ => {
+                app.start_game(args.spectator);
+                if let Some(world) = app.world.as_ref() {
+                    println!(
+                        "partie: tour {} checksum {:016x}",
+                        world.turn,
+                        world.checksum()
+                    );
+                }
+                app.selected = Some((app.cam_x, app.cam_y)); // aperçu du panneau
+                app.draw_game(wi, hi, -1, -1);
+            }
         }
     }
     let path = args.shot.as_deref().unwrap_or("out/ui.png");
@@ -328,6 +360,9 @@ fn run_audit(args: &Args) {
     };
     let mut app = App::new(args);
     app.buf = vec![gui::BG; (w * h) as usize];
+    // L'enregistrement de l'audit va dans son propre dossier (ne pas écraser
+    // la dernière vraie partie) ; il sert aussi d'artefact rejouable.
+    app.record_path = Some(format!("{dir}/audit.rec.jsonl"));
     let mut a = Auditor {
         dir,
         w,
@@ -420,27 +455,72 @@ impl App {
             last_msg: String::new(),
             stats: String::new(),
             stats_dirty: true,
+            record_path: args.record.clone(),
+            recorder: None,
+            replay_mode: false,
+            replay_cmds: Vec::new(),
+            replay_pos: 0,
         }
     }
 
     // ---- Cycle de partie -------------------------------------------------
 
+    /// Point UNIQUE d'application : enregistre la commande (si actif) puis l'applique.
+    /// Tout passe par ici → le `.rec.jsonl` contient le flux complet (joueur,
+    /// Step, Directeur, IA) et rejoue la partie à l'identique.
+    fn apply(&mut self, cmd: Command) -> Vec<Event> {
+        let mut drop_rec = false;
+        if let Some(rec) = self.recorder.as_mut() {
+            if rec.record(&cmd).is_err() {
+                drop_rec = true;
+            }
+        }
+        if drop_rec {
+            eprintln!("enregistrement interrompu (erreur d'ecriture)");
+            self.recorder = None;
+        }
+        match self.world.as_mut() {
+            Some(w) => w.apply(cmd),
+            None => Vec::new(),
+        }
+    }
+
     fn start_game(&mut self, spectator: bool) {
-        let mut world = World::new(self.config.seed, 800, 500);
-        for c in ai::spawn_nations(&world, self.config.nations) {
-            world.apply(c);
+        let seed = self.config.seed;
+        self.world = Some(World::new(seed, 800, 500));
+        self.spectator = spectator;
+        self.replay_mode = false;
+        // Enregistrement auto (audit total) : la dernière partie est rejouable.
+        self.recorder = None;
+        let path = self
+            .record_path
+            .clone()
+            .unwrap_or_else(|| "out/derniere-partie.rec.jsonl".to_string());
+        match persist::Recorder::create(
+            &path,
+            &persist::Header {
+                seed,
+                width: 800,
+                height: 500,
+            },
+        ) {
+            Ok(r) => self.recorder = Some(r),
+            Err(e) => eprintln!("enregistrement impossible ({path}): {e}"),
+        }
+        let setup = ai::spawn_nations(self.world.as_ref().unwrap(), self.config.nations);
+        for c in setup {
+            self.apply(c);
         }
         for _ in 0..self.config.pre_turns {
-            step_world(&mut world, self.player, self.config.nations, true);
+            self.end_turn();
         }
-        let (cx, cy) = render::nation_bbox(&world, self.player, 0)
+        let world = self.world.as_ref().unwrap();
+        let (cx, cy) = render::nation_bbox(world, self.player, 0)
             .map(|(x, y, w, h)| (x + w / 2, y + h / 2))
             .unwrap_or((world.width / 2, world.height / 2));
         self.cam_x = cx;
         self.cam_y = cy;
         self.px = self.config.px;
-        self.world = Some(world);
-        self.spectator = spectator;
         self.tool = Tool::None;
         self.selected = None;
         self.swarm_src = None;
@@ -451,9 +531,91 @@ impl App {
     }
 
     fn end_turn(&mut self) {
+        if self.world.is_none() {
+            return;
+        }
         let (player, nations, spec) = (self.player, self.config.nations, self.spectator);
-        if let Some(world) = self.world.as_mut() {
-            step_world(world, player, nations, spec);
+        self.apply(Command::Step);
+        for c in ai::direct(self.world.as_ref().unwrap(), player) {
+            self.apply(c);
+        }
+        for nid in 0..nations {
+            if !spec && nid == player {
+                continue;
+            }
+            for c in ai::plan(self.world.as_ref().unwrap(), nid) {
+                self.apply(c);
+            }
+        }
+        self.stats_dirty = true;
+    }
+
+    /// Charge un enregistrement et bascule en mode rejeu (état = mise en place).
+    fn load_replay(&mut self, path: &str) -> bool {
+        let (header, cmds) = match persist::read_recording(path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("rejeu impossible ({path}): {e}");
+                return false;
+            }
+        };
+        self.replay_mode = true;
+        self.recorder = None;
+        self.config.seed = header.seed;
+        let mut world = World::new(header.seed, header.width, header.height);
+        // Applique la mise en place : tout ce qui précède le 1er Step (tour 0).
+        let mut pos = 0;
+        while pos < cmds.len() && !matches!(cmds[pos], Command::Step) {
+            world.apply(cmds[pos].clone());
+            pos += 1;
+        }
+        let (cx, cy) = render::nation_bbox(&world, self.player, 0)
+            .map(|(x, y, w, h)| (x + w / 2, y + h / 2))
+            .unwrap_or((world.width / 2, world.height / 2));
+        self.cam_x = cx;
+        self.cam_y = cy;
+        self.px = self.config.px;
+        self.world = Some(world);
+        self.replay_cmds = cmds;
+        self.replay_pos = pos;
+        self.spectator = true; // pas d'action joueur en rejeu (Pause/x1/x2 dispo)
+        self.speed = 0;
+        self.screen = Screen::Game;
+        self.last_msg = "rejeu pret - Espace ou x1/x2 pour derouler".to_string();
+        self.stats_dirty = true;
+        true
+    }
+
+    /// Avance le rejeu d'UN tour : applique le Step courant + tout jusqu'au prochain.
+    fn replay_step(&mut self) {
+        if self.replay_pos >= self.replay_cmds.len() {
+            self.last_msg = "fin du rejeu".to_string();
+            return;
+        }
+        let mut first = true;
+        while self.replay_pos < self.replay_cmds.len() {
+            let is_step = matches!(self.replay_cmds[self.replay_pos], Command::Step);
+            if is_step && !first {
+                break;
+            }
+            let cmd = self.replay_cmds[self.replay_pos].clone();
+            if let Some(w) = self.world.as_mut() {
+                w.apply(cmd);
+            }
+            self.replay_pos += 1;
+            first = false;
+        }
+        self.stats_dirty = true;
+    }
+
+    /// Applique tout le reste du rejeu d'un coup (état final).
+    fn replay_all(&mut self) {
+        while self.replay_pos < self.replay_cmds.len() {
+            let cmd = self.replay_cmds[self.replay_pos].clone();
+            if let Some(w) = self.world.as_mut() {
+                w.apply(cmd);
+            }
+            self.replay_pos += 1;
         }
         self.stats_dirty = true;
     }
@@ -577,45 +739,48 @@ impl App {
             self.screen = Screen::Menu;
             return;
         }
-        // Outils.
-        if input.key_pressed(Key::F) {
-            self.set_tool(Tool::Found);
+        // Outils + recherche : uniquement quand on JOUE (pas en rejeu).
+        if !self.replay_mode {
+            if input.key_pressed(Key::F) {
+                self.set_tool(Tool::Found);
+            }
+            if input.key_pressed(Key::E) {
+                self.set_tool(Tool::Swarm);
+            }
+            if input.key_pressed(Key::N) {
+                self.set_tool(Tool::None);
+            }
+            if !self.spectator {
+                for (k, b) in [
+                    (Key::Key1, 0u8),
+                    (Key::Key2, 1),
+                    (Key::Key3, 2),
+                    (Key::Key4, 3),
+                ] {
+                    if input.key_pressed(k) {
+                        self.research(b);
+                    }
+                }
+            }
         }
-        if input.key_pressed(Key::E) {
-            self.set_tool(Tool::Swarm);
-        }
-        if input.key_pressed(Key::N) {
-            self.set_tool(Tool::None);
-        }
-        // Fin de tour.
+        // Fin de tour (jeu) ou tour suivant (rejeu).
         if input.key_pressed(Key::Space) {
-            self.end_turn();
+            self.advance();
         }
-        // Chiffres : recherche (joueur) ou vitesse (spectateur).
+        // Vitesse (spectateur ET rejeu).
         if self.spectator {
             for (k, s) in [(Key::Key0, 0u32), (Key::Key1, 1), (Key::Key2, 2)] {
                 if input.key_pressed(k) {
                     self.speed = s;
                 }
             }
-        } else {
-            for (k, b) in [
-                (Key::Key1, 0u8),
-                (Key::Key2, 1),
-                (Key::Key3, 2),
-                (Key::Key4, 3),
-            ] {
-                if input.key_pressed(k) {
-                    self.research(b);
-                }
-            }
         }
 
-        // Auto-tour en spectateur.
+        // Auto-déroulé (spectateur ou rejeu) selon la vitesse.
         if self.spectator && self.speed > 0 {
             let interval: u64 = if self.speed >= 2 { 12 } else { 28 };
             if self.frame.is_multiple_of(interval) {
-                self.end_turn();
+                self.advance();
             }
         }
 
@@ -658,44 +823,65 @@ impl App {
 
     fn research(&mut self, branch: u8) {
         let player = self.player;
-        if let Some(world) = self.world.as_mut() {
-            let ev = world.apply(Command::Research {
-                nation: player,
-                branch,
-            });
-            if let Some(m) = feedback(&ev) {
-                self.last_msg = m;
-            }
+        let ev = self.apply(Command::Research {
+            nation: player,
+            branch,
+        });
+        if let Some(m) = feedback(&ev) {
+            self.last_msg = m;
         }
         self.stats_dirty = true;
+    }
+
+    /// Tour suivant : déroule le rejeu si actif, sinon résout un vrai tour.
+    fn advance(&mut self) {
+        if self.replay_mode {
+            self.replay_step();
+        } else {
+            self.end_turn();
+        }
     }
 
     fn do_game_btn(&mut self, id: GameBtn) {
         match id {
             GameBtn::Menu => self.screen = Screen::Menu,
-            GameBtn::EndTurn => self.end_turn(),
-            GameBtn::Tool(t) => self.set_tool(t),
-            GameBtn::Research(b) => self.research(b),
+            GameBtn::EndTurn => self.advance(),
+            GameBtn::Tool(t) => {
+                if !self.replay_mode {
+                    self.set_tool(t);
+                }
+            }
+            GameBtn::Research(b) => {
+                if !self.replay_mode {
+                    self.research(b);
+                }
+            }
             GameBtn::Speed(s) => self.speed = s,
         }
     }
 
     fn map_click(&mut self, mx: i32, my: i32, w: i32, h: i32) {
-        let Some(world) = self.world.as_mut() else {
-            return;
+        let (tx, ty) = {
+            let Some(world) = self.world.as_ref() else {
+                return;
+            };
+            let (x0, y0, _, _, pxe) =
+                render::viewport_rect(world, self.cam_x, self.cam_y, self.px, w as u32, h as u32);
+            let tx = x0 + (mx as u32) / pxe;
+            let ty = y0 + (my as u32) / pxe;
+            if tx >= world.width || ty >= world.height {
+                return;
+            }
+            (tx, ty)
         };
-        let (x0, y0, _, _, pxe) =
-            render::viewport_rect(world, self.cam_x, self.cam_y, self.px, w as u32, h as u32);
-        let tx = x0 + (mx as u32) / pxe;
-        let ty = y0 + (my as u32) / pxe;
-        if tx >= world.width || ty >= world.height {
-            return;
-        }
         self.selected = Some((tx, ty));
+        if self.replay_mode {
+            return; // en rejeu : inspection seulement
+        }
         let player = self.player;
         match self.tool {
             Tool::Found => {
-                let ev = world.apply(Command::Settle {
+                let ev = self.apply(Command::Settle {
                     x: tx,
                     y: ty,
                     nation: player,
@@ -708,7 +894,7 @@ impl App {
             }
             Tool::Swarm => {
                 if let Some((sx, sy)) = self.swarm_src.take() {
-                    let ev = world.apply(Command::Swarm {
+                    let ev = self.apply(Command::Swarm {
                         from_x: sx,
                         from_y: sy,
                         to_x: tx,
@@ -967,21 +1153,24 @@ impl App {
             // Barre du bas.
             c.fill_rect(0, h - BOT_H, w, BOT_H, gui::PANEL);
             c.fill_rect(0, h - BOT_H, w, 1, gui::BORDER);
-            let mode = if self.spectator {
-                "SPECTATEUR"
+            let mode_line = if self.replay_mode {
+                format!(
+                    "REJEU  -  {} / {} commandes  -  tech E{} T{} F{} L{}",
+                    self.replay_pos,
+                    self.replay_cmds.len(),
+                    tech[0],
+                    tech[1],
+                    tech[2],
+                    tech[3]
+                )
             } else {
-                "JEU"
-            };
-            c.text(
-                10,
-                h - BOT_H - 22,
-                &format!(
+                let mode = if self.spectator { "SPECTATEUR" } else { "JEU" };
+                format!(
                     "Mode {mode}  -  outil: {toolname}  -  tech E{} T{} F{} L{}",
                     tech[0], tech[1], tech[2], tech[3]
-                ),
-                2,
-                gui::TEXT_DIM,
-            );
+                )
+            };
+            c.text(10, h - BOT_H - 22, &mode_line, 2, gui::TEXT_DIM);
 
             // Boutons (avec état actif pour l'outil / la vitesse courante).
             for (id, b) in &buttons {
@@ -1128,6 +1317,8 @@ struct Args {
     screen: String,
     audit: bool,
     out: Option<String>,
+    record: Option<String>,
+    replay: Option<String>,
 }
 
 impl Args {
@@ -1145,6 +1336,8 @@ impl Args {
             screen: "game".to_string(),
             audit: false,
             out: None,
+            record: None,
+            replay: None,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -1165,6 +1358,8 @@ impl Args {
                 }
                 "--audit" => a.audit = true,
                 "--out" => a.out = it.next(),
+                "--record" => a.record = it.next(),
+                "--replay" => a.replay = it.next(),
                 other => eprintln!("argument ignoré : {other}"),
             }
         }

@@ -89,14 +89,19 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
   `handle()`/`draw()`. L'audit joue une séquence scriptée (menu → paramètres →
   partie → fonder/recherche/inspecter → spectateur sur N tours) et sauve un PNG
   par étape, **à la résolution plein écran réelle** → on vérifie l'UI et le jeu
-  en conditions réelles, sans fenêtre bloquante. (Étape suivante : rejouer un
-  `.rec.jsonl` enregistré au lieu d'un script en dur.)
+  en conditions réelles, sans fenêtre bloquante.
 - **Plein écran** = dimensionné sur la **zone de travail** Win32 (`SPI_GETWORKAREA`)
   + `set_position`, pour que la barre du bas ne passe jamais sous la barre des
   tâches.
+- **Enregistrement + rejeu déterministe** : un **point unique** `App::apply()`
+  enregistre **chaque** commande (joueur, Step, Directeur, IA) via
+  `persist::Recorder` → `out/derniere-partie.rec.jsonl` (auto à chaque partie ;
+  `--record FILE` pour choisir). `--replay FILE` (`run-rejeu.bat`) recrée le monde
+  depuis l'en-tête et déroule **tour par tour** (Espace) ou en auto (×1/×2) ;
+  inspection libre, aucune action joueur. Vérifié **au bit près** : checksum
+  identique enregistrement vs rejeu (`--replay --headless` l'imprime).
 
 ### Reste (D/E)
 - Outils **militaires** (Mobiliser/Marcher) et **diplomatie** (guerre/paix) pour
   le joueur (actuellement IA seule).
-- **Enregistrement** des commandes UI dans un `.rec.jsonl` (replay du jeu joué).
 - Équilibrage des vitesses croissance/recherche.

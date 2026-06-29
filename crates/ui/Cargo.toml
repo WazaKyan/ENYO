@@ -8,6 +8,7 @@ proto.workspace = true
 sim.workspace = true
 ai.workspace = true
 render.workspace = true
+persist.workspace = true
 font8x8.workspace = true
 winapi.workspace = true
 # minifb : fenêtre framebuffer ; build PROUVÉ sur la toolchain GNU
