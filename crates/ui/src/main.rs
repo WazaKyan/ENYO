@@ -1509,10 +1509,7 @@ impl App {
                     .owner
                     .map(|o| format!("N{o}"))
                     .unwrap_or_else(|| "libre".to_string());
-                let bat = t
-                    .building
-                    .map(|b| format!("{b:?}"))
-                    .unwrap_or_else(|| "aucun".to_string());
+                let bat = t.building.map(building_fr).unwrap_or("aucun");
                 let lines = [
                     format!("Case ({tx}, {ty})  -  {:?}", t.biome),
                     format!("proprietaire : {owner}"),
@@ -1551,6 +1548,17 @@ fn step_world(world: &mut World, player: u16, nations: u16, spectator: bool) {
         for c in ai::plan(world, nid) {
             world.apply(c);
         }
+    }
+}
+
+/// Nom français d'un bâtiment (les chaînes d'affichage sont en français).
+fn building_fr(b: Building) -> &'static str {
+    match b {
+        Building::Industry => "Industrie",
+        Building::Commerce => "Commerce",
+        Building::Infrastructure => "Infrastructure",
+        Building::Education => "Education",
+        Building::Military => "Militaire",
     }
 }
 
@@ -1596,7 +1604,7 @@ fn feedback(events: &[Event]) -> Option<String> {
             }
             Event::PeaceMade { target, .. } => return Some(format!("paix avec N{target}")),
             Event::Built { x, y, building, .. } => {
-                return Some(format!("bati {building:?} ({x},{y})"))
+                return Some(format!("bati {} ({x},{y})", building_fr(*building)))
             }
             _ => {}
         }

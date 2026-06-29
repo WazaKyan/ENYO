@@ -568,6 +568,9 @@ impl World {
         let height = self.height;
         let old_pop: Vec<f32> = self.tiles.iter().map(|t| t.population).collect();
         let mut knowledge_gain = vec![0.0f32; self.nations.len()];
+        // Nations encore vivantes (≥ 1 case possédée) : seules elles gagnent de
+        // l'influence (sinon une nation conquise continuerait d'en accumuler).
+        let mut owned = vec![false; self.nations.len()];
         // BTreeSet (et non HashSet) : ordre d'itération déterministe → griefs
         // appliqués dans un ordre stable → checksum reproductible.
         let mut borders: BTreeSet<(u16, u16)> = BTreeSet::new();
@@ -613,6 +616,7 @@ impl World {
                 let newpop = t.population;
 
                 if let Some(i) = ni {
+                    owned[i] = true;
                     knowledge_gain[i] += dev * (newpop / 1000.0).min(1.0) * KNOWLEDGE_RATE;
                 }
             }
@@ -626,8 +630,10 @@ impl World {
         }
 
         // --- Économie interne S8 ---
-        for n in self.nations.iter_mut() {
-            n.influence += INFLUENCE_BASE;
+        for (i, n) in self.nations.iter_mut().enumerate() {
+            if owned[i] {
+                n.influence += INFLUENCE_BASE;
+            }
         }
         // Réseaux d'infrastructure (E2) : main-d'œuvre mise en commun par les routes.
         let networks = connect::Networks::build(&self.tiles, width, height);
@@ -652,9 +658,14 @@ impl World {
                 let cpop = networks.connected_pop(&self.tiles, idx, owner);
                 match building {
                     Building::Industry => {
-                        materials_gain[ni] += industry_output(&self.tiles[idx], cpop);
-                        let t = &mut self.tiles[idx];
-                        t.devastation = (t.devastation + INDUSTRY_POLLUTION).min(1.0);
+                        let out = industry_output(&self.tiles[idx], cpop);
+                        materials_gain[ni] += out;
+                        // Pas de production -> pas de pollution (une usine à l'arrêt
+                        // ne dégrade pas la case ; corrige le piège « 0 mat + pollue »).
+                        if out > 0 {
+                            let t = &mut self.tiles[idx];
+                            t.devastation = (t.devastation + INDUSTRY_POLLUTION).min(1.0);
+                        }
                     }
                     Building::Commerce if cpop > 0.0 => {
                         // Transforme des matériaux (selon main-d'œuvre, atténué par
@@ -692,6 +703,14 @@ impl World {
         let idx = self.index(x, y);
         if self.tiles[idx].owner != Some(nation) {
             return reject("case non possédée");
+        }
+        if self.tiles[idx].kind != TileKind::Land {
+            return reject("pas une terre"); // défense en profondeur (cf. settle/swarm)
+        }
+        // Fail-closed : ne pas facturer un bâtiment dont la production n'existe pas
+        // encore (Éducation = E3, Militaire = E4). Évite de brûler des ressources.
+        if matches!(building, Building::Education | Building::Military) {
+            return reject("bâtiment pas encore disponible");
         }
         if self.tiles[idx].building.is_some() {
             return reject("case déjà bâtie");
@@ -799,8 +818,14 @@ pub fn build_cost(b: Building) -> (i64, i64) {
 fn industry_output(t: &Tile, connected_pop: f32) -> i64 {
     let terrain = (t.soil_fertility + t.vegetation + t.precip_now) / 3.0;
     let workforce = (connected_pop / INDUSTRY_WORKFORCE).min(1.0);
-    let out = INDUSTRY_BASE * terrain * workforce * (1.0 - t.devastation);
-    out.max(0.0).round() as i64
+    industry_yield(terrain, workforce, t.devastation)
+}
+
+/// Rendement d'industrie à partir des scalaires (pur, testable, formule gelée).
+pub(crate) fn industry_yield(terrain: f32, workforce: f32, dev: f32) -> i64 {
+    (INDUSTRY_BASE * terrain * workforce * (1.0 - dev))
+        .max(0.0)
+        .round() as i64
 }
 
 /// Une commande rejetée, loguée pour l'audit.
@@ -856,5 +881,25 @@ mod tests {
         let events = world.apply(Command::Step);
         assert_eq!(world.turn, 1);
         assert_eq!(events.len(), 1);
+    }
+
+    // Formules économiques GELÉES (CLAUDE.md : figer les formules partagées avant
+    // leurs dépendants). Tout changement ici est intentionnel et re-béni.
+    #[test]
+    fn industry_yield_frozen() {
+        assert_eq!(industry_yield(1.0, 1.0, 0.0), 8); // INDUSTRY_BASE
+        assert_eq!(industry_yield(0.5, 0.5, 0.0), 2); // 8*0.5*0.5
+        assert_eq!(industry_yield(1.0, 1.0, 0.5), 4); // dévastation 50 %
+        assert_eq!(industry_yield(0.0, 1.0, 0.0), 0); // terrain nul -> rien
+        assert_eq!(industry_yield(1.0, 0.0, 0.0), 0); // sans main-d'œuvre -> rien
+    }
+
+    #[test]
+    fn build_costs_frozen() {
+        assert_eq!(build_cost(Building::Industry), (100, 0));
+        assert_eq!(build_cost(Building::Commerce), (120, 20));
+        assert_eq!(build_cost(Building::Infrastructure), (40, 20));
+        assert_eq!(build_cost(Building::Education), (150, 30));
+        assert_eq!(build_cost(Building::Military), (120, 40));
     }
 }
