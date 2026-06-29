@@ -220,6 +220,13 @@ pub fn region(world: &World, x0: u32, y0: u32, w: u32, h: u32, px: u32) -> RgbIm
                     (t.devastation * 0.7).min(0.7),
                 );
             }
+            // Occupation militaire (S5) : hachures à la couleur de l'occupant.
+            if let Some(occ) = t.occupier {
+                if Some(occ) != t.owner {
+                    let oc = NATION_COLORS[occ as usize % NATION_COLORS.len()];
+                    draw_hatch(&mut img, bx, by, px, oc);
+                }
+            }
             if let Some(o) = t.owner {
                 draw_borders(&mut img, world, tx, ty, o, (bx, by), px);
             }
@@ -697,6 +704,7 @@ fn sample(kind: TileKind, biome: Biome, elevation: f32) -> Tile {
         temperature: 15.0,
         precip_now: 0.5,
         owner: None,
+        occupier: None,
         population: 0.0,
         development: 0.0,
         devastation: 0.0,
@@ -912,6 +920,17 @@ fn draw_borders(
     }
     if differ(x + 1, y) {
         fill_block(img, bx + px.saturating_sub(1), by, 1, px, edge);
+    }
+}
+
+/// Hachures diagonales (occupation militaire) à la couleur de l'occupant.
+fn draw_hatch(img: &mut RgbImage, bx: u32, by: u32, px: u32, c: [u8; 3]) {
+    for yy in 0..px {
+        for xx in 0..px {
+            if (xx + yy) % 4 == 0 {
+                put(img, bx + xx, by + yy, c);
+            }
+        }
     }
 }
 

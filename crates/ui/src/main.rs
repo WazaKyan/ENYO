@@ -800,8 +800,24 @@ impl App {
         let month = world.turn % 12 + 1;
         let house = n.map(|n| n.housing).unwrap_or(0);
         let foodr = n.map(|n| n.food).unwrap_or(0);
+        // Guerres en cours : score d'occupation / seuil de capitulation (> 75 %).
+        let mut war = String::new();
+        for &(a, b) in world.diplomacy.wars() {
+            let enemy = if a == self.player {
+                Some(b)
+            } else if b == self.player {
+                Some(a)
+            } else {
+                None
+            };
+            if let Some(e) = enemy {
+                let score = world.war_score(self.player, e);
+                let need = world.nation_value(e) * 3 / 4 + 1;
+                war.push_str(&format!("  GUERRE N{e}: {score}/{need}"));
+            }
+        }
         self.stats = format!(
-            "An {year} M{month:02} N{}  {pop:.0}h {tiles}c {prov}p  |  argent {money}  mat {mat}  nour {foodr}  hab {house}  infl {infl}  sci {kn:.0}",
+            "An {year} M{month:02} N{}  {pop:.0}h {tiles}c {prov}p  |  argent {money}  mat {mat}  nour {foodr}  hab {house}  infl {infl}  sci {kn:.0}{war}",
             self.player
         );
     }
@@ -1727,6 +1743,16 @@ fn feedback(events: &[Event]) -> Option<String> {
             }
             Event::UnitDestroyed { x, y, .. } => {
                 return Some(format!("unite detruite ({x},{y})"))
+            }
+            Event::Capitulation {
+                winner,
+                loser,
+                tiles,
+                ..
+            } => {
+                return Some(format!(
+                    "CAPITULATION : N{winner} annexe {tiles} cases de N{loser}"
+                ))
             }
             Event::WarDeclared { target, .. } => {
                 return Some(format!("GUERRE declaree a N{target}"))

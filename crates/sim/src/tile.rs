@@ -83,6 +83,12 @@ pub struct Tile {
     // --- Anthropique (Phase 2) ---
     /// Nation propriétaire de la case (id), ou `None` si inoccupée.
     pub owner: Option<u16>,
+    /// Nation **occupant militairement** la case (S5) si elle diffère du
+    /// propriétaire : une unité ennemie y est passée pendant la guerre → la case
+    /// est « hachurée », rapporte du score de guerre, et change de main à la
+    /// capitulation. `None` = non occupée (le propriétaire la tient).
+    #[serde(default)]
+    pub occupier: Option<u16>,
     pub population: f32,
     pub development: f32,
     pub devastation: f32,

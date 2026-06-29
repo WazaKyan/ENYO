@@ -167,6 +167,14 @@ pub enum Event {
     },
     /// Une unité a été détruite (PV ≤ 0) — retirée du monde.
     UnitDestroyed { unit: u32, x: u32, y: u32 },
+    /// Une nation a **capitulé** : `winner` annexe les `tiles` cases qu'il occupait
+    /// (valant `score` points de victoire) et la paix est imposée (S5/S6).
+    Capitulation {
+        winner: u16,
+        loser: u16,
+        tiles: u32,
+        score: i64,
+    },
     /// Une guerre a été déclarée.
     WarDeclared { nation: u16, target: u16 },
     /// La paix a été conclue.

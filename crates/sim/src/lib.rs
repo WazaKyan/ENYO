@@ -92,6 +92,15 @@ const DEF_CAP: i32 = 85;
 const FOREST_VEG: f32 = 0.5;
 /// Seuil de relief au-delà duquel une case compte comme « accidentée » (malus).
 const ROUGH_RUG: f32 = 0.4;
+// --- Score de guerre & capitulation (S5/S6) ---
+/// Valeur d'une case pour le score de guerre : vide / bâtiment / ville.
+const TILE_VALUE_EMPTY: i64 = 1;
+const TILE_VALUE_BUILDING: i64 = 5;
+const TILE_VALUE_CITY: i64 = 10;
+/// Fraction (3/4 = 75 %) de la valeur totale d'un ennemi à OCCUPER pour le faire
+/// capituler (strictement « > 75 % »).
+const CAPITULATION_NUM: i64 = 3;
+const CAPITULATION_DEN: i64 = 4;
 
 /// L'état complet de la partie — reconstructible depuis une graine et une suite
 /// de commandes (donc rejouable).
@@ -377,12 +386,14 @@ impl World {
         vec![Event::WarDeclared { nation, target }]
     }
 
-    /// Fait la paix (S6).
+    /// Fait la paix (S6). Les occupations entre les deux nations retombent (les
+    /// cases occupées restent à leur propriétaire — rien n'est annexé sans victoire).
     fn make_peace(&mut self, nation: u16, target: u16) -> Vec<Event> {
         if !self.diplomacy.at_war(nation, target) {
             return reject("pas en guerre");
         }
         self.diplomacy.set_war(nation, target, false);
+        self.clear_occupations(nation, target);
         vec![Event::PeaceMade { nation, target }]
     }
 
@@ -453,6 +464,9 @@ impl World {
             u.moves_left = unit::unit_stats(u.kind).moves;
         }
 
+        // Capitulations (S5/S6) : annexion par occupation + paix imposée.
+        let cap_events = self.resolve_capitulations();
+
         // Les griefs retombent lentement.
         self.diplomacy.decay(0.99);
 
@@ -467,13 +481,15 @@ impl World {
             avg_vegetation,
             "tour résolu"
         );
-        vec![Event::TurnResolved {
+        let mut events = cap_events;
+        events.push(Event::TurnResolved {
             turn: self.turn,
             month,
             avg_temperature,
             avg_vegetation,
             checksum,
-        }]
+        });
+        events
     }
 
     /// Dynamiques anthropiques d'un tour (S1) + friction de frontière (S6).
@@ -793,6 +809,91 @@ impl World {
         m
     }
 
+    /// Met à jour l'**occupation** d'une case où se trouve l'unité de `mover` : sa
+    /// propre case n'est jamais occupée (réclamée) ; une case ennemie EN GUERRE est
+    /// marquée occupée (hachurée), de façon **collante** (rapporte du score jusqu'à
+    /// la paix ou la reprise par le propriétaire).
+    fn update_occupation(&mut self, idx: usize, mover: u16) {
+        match self.tiles[idx].owner {
+            Some(o) if o == mover => self.tiles[idx].occupier = None,
+            Some(o) if self.diplomacy.at_war(mover, o) => {
+                self.tiles[idx].occupier = Some(mover);
+            }
+            _ => {}
+        }
+    }
+
+    /// Valeur totale du territoire d'une nation (score de guerre). Public : l'UI
+    /// l'affiche pour montrer la progression vers la capitulation.
+    pub fn nation_value(&self, nation: u16) -> i64 {
+        self.tiles
+            .iter()
+            .filter(|t| t.owner == Some(nation))
+            .map(tile_value)
+            .sum()
+    }
+
+    /// Score de guerre de `attacker` contre `defender` = valeur des cases de
+    /// `defender` qu'`attacker` **occupe** (hachurées). Public (HUD).
+    pub fn war_score(&self, attacker: u16, defender: u16) -> i64 {
+        self.tiles
+            .iter()
+            .filter(|t| t.owner == Some(defender) && t.occupier == Some(attacker))
+            .map(tile_value)
+            .sum()
+    }
+
+    /// Capitulations (S5/S6) : pour chaque guerre, si un camp **occupe > 75 % de la
+    /// valeur** de l'autre, il **annexe les cases occupées** et la paix est imposée.
+    fn resolve_capitulations(&mut self) -> Vec<Event> {
+        let mut events = Vec::new();
+        let wars: Vec<(u16, u16)> = self.diplomacy.wars().to_vec();
+        for (a, b) in wars {
+            for (att, def) in [(a, b), (b, a)] {
+                if !self.diplomacy.at_war(att, def) {
+                    continue; // une capitulation a déjà clos cette guerre ce tour
+                }
+                let total = self.nation_value(def);
+                if total <= 0 {
+                    continue;
+                }
+                let score = self.war_score(att, def);
+                if score * CAPITULATION_DEN <= total * CAPITULATION_NUM {
+                    continue; // pas encore > 75 %
+                }
+                // Annexion des cases occupées par le vainqueur + paix imposée.
+                let mut tiles = 0u32;
+                for t in &mut self.tiles {
+                    if t.owner == Some(def) && t.occupier == Some(att) {
+                        t.owner = Some(att);
+                        t.occupier = None;
+                        tiles += 1;
+                    }
+                }
+                self.clear_occupations(att, def);
+                self.diplomacy.set_war(att, def, false);
+                events.push(Event::Capitulation {
+                    winner: att,
+                    loser: def,
+                    tiles,
+                    score,
+                });
+            }
+        }
+        events
+    }
+
+    /// Efface toute occupation croisée entre deux nations (fin de guerre).
+    fn clear_occupations(&mut self, a: u16, b: u16) {
+        for t in &mut self.tiles {
+            if t.occupier == Some(a) && t.owner == Some(b)
+                || t.occupier == Some(b) && t.owner == Some(a)
+            {
+                t.occupier = None;
+            }
+        }
+    }
+
     /// Recrute une unité (S5) sur une case possédée portant une **caserne**. Coûte
     /// de l'argent (nation) + de la force (de la caserne) ; type gaté par la tech Fer.
     fn create_unit(&mut self, x: u32, y: u32, nation: u16, kind: UnitKind) -> Vec<Event> {
@@ -869,10 +970,14 @@ impl World {
         });
         match cost {
             Some(c) => {
-                let u = &mut self.units[ui];
-                u.x = tx;
-                u.y = ty;
-                u.moves_left = u.moves_left.saturating_sub(c);
+                {
+                    let u = &mut self.units[ui];
+                    u.x = tx;
+                    u.y = ty;
+                    u.moves_left = u.moves_left.saturating_sub(c);
+                }
+                // Occupation (S5) : entrer sur une case ennemie en guerre la marque.
+                self.update_occupation(to, owner);
                 vec![Event::UnitMoved {
                     unit: unit_id,
                     to_x: tx,
@@ -986,6 +1091,7 @@ impl World {
             fnv_u32(&mut h, t.devastation.to_bits());
             fnv_u32(&mut h, t.force.to_bits());
             fnv_u32(&mut h, t.owner.map(|o| o as u32 + 1).unwrap_or(0));
+            fnv_u32(&mut h, t.occupier.map(|o| o as u32 + 1).unwrap_or(0));
             h ^= match t.kind {
                 TileKind::Ocean => 1,
                 TileKind::Land => 2,
@@ -1064,6 +1170,15 @@ pub fn build_cost(b: Building) -> (i64, i64, i64) {
         Building::Education => (150, 30, 0),
         Building::Military => (120, 40, 0),
         Building::Farm => (80, 15, 0),
+    }
+}
+
+/// Valeur d'une case pour le **score de guerre** : vide 1, bâtiment 5, ville 10.
+fn tile_value(t: &Tile) -> i64 {
+    match t.building {
+        Some(Building::City) => TILE_VALUE_CITY,
+        Some(_) => TILE_VALUE_BUILDING,
+        None => TILE_VALUE_EMPTY,
     }
 }
 

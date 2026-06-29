@@ -71,12 +71,16 @@ Le joueur fait croître et essaimer sa civilisation sur la grille.
 > territoire (coûte de l'influence). Modèle et calibrage faisant autorité :
 > `docs/ECONOMY.md` § RÉVISION.
 
-> **Révision militaire (S5) — unités.** Au-delà de la `force` de case, on recrute des
-> **unités** (agents discrets : PV, dégâts, portée, mouvement) aux **casernes**
-> (coût argent + force ; types Infanterie/Archers/Cavalerie gâtés par la branche
-> **Fer**). Mouvement selon terrain + intempéries ; combat avec bonus de défense du
-> terrain (défenseur) et malus d'attaque selon type×terrain (attaquant). Détail :
-> `docs/GAMEPLAY.md` § Révision militaire.
+> **Révision militaire (S5) — unités.** **Tout le militaire passe par les unités**
+> (Mobiliser/Marcher retirés) : agents discrets (PV, dégâts, portée, mouvement)
+> recrutés aux **casernes** (coût argent + force ; types Infanterie/Archers/Cavalerie
+> gâtés par la branche **Fer**). Mouvement selon terrain + intempéries ; combat avec
+> bonus de défense du terrain (défenseur) et malus d'attaque selon type×terrain.
+>
+> **Conquête (S5/S6).** Prendre du territoire ennemi = **l'occuper** (une unité y
+> passe → case **hachurée**, rapporte du score = valeur **vide 1 / bât. 5 / ville
+> 10**) puis **gagner** : à **> 75 % de la valeur** ennemie occupée → **capitulation**
+> (annexion des cases occupées + paix imposée). Détail : `docs/GAMEPLAY.md`.
 
 ## 4. Modèle du monde
 

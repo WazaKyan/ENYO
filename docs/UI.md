@@ -133,6 +133,11 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
   (jeton à la couleur de la nation, forme par type : carré/triangle/losange, **barre
   de PV**) ; l'unité sélectionnée est surlignée. Planche d'aperçu :
   `harness --unit-sheet f.png`.
+- **Conquête (S5/S6)** : les cases ennemies **occupées** par tes unités sont
+  **hachurées** (couleur de l'occupant) ; le HUD affiche, par guerre,
+  `GUERRE N{e}: score/seuil` (capitulation à > 75 % de la valeur ennemie). Un
+  message annonce la **capitulation** (annexion des cases occupées + paix). Mobiliser/
+  Marcher ont été **retirés** (tout passe par les unités).
 
 ### Reste (D/E)
 - Équilibrage des vitesses croissance/recherche/tech.

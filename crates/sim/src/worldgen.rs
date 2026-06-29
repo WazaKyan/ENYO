@@ -87,6 +87,7 @@ pub fn generate(seed: u64, width: u32, height: u32) -> GenOutcome {
                 temperature: mean_temperature,
                 precip_now: precipitation,
                 owner: None,
+                occupier: None,
                 population: 0.0,
                 development: 0.0,
                 devastation: 0.0,

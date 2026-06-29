@@ -49,6 +49,18 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 > accidenté). Tout en **entiers** (déterminisme). C'est la **première entorse**
 > assumée au « tout en stats de case » : les unités sont des entités à part entière.
 
+> **Révision conquête (S5/S6) — OCCUPATION & CAPITULATION.** Le **seul moyen de
+> prendre du territoire ennemi** = l'**occuper** puis **gagner la guerre**. Quand une
+> unité passe sur une case ennemie (en guerre), la case devient **hachurée**
+> (occupée, **collante**) : elle reste à l'ennemi mais rapporte du **score de
+> guerre** = la **valeur** des cases occupées (**vide 1 / bâtiment 5 / ville 10**).
+> Dès que le score d'occupation dépasse **75 % de la valeur totale** de l'ennemi, il
+> **capitule** : le vainqueur **annexe les cases qu'il occupe** et la **paix est
+> imposée**. Le seuil étant relatif au total, **un grand empire est plus dur à faire
+> plier** (une case parmi 200 pèse peu). La paix négociée (sans victoire) **n'annexe
+> rien** (les occupations retombent). Le propriétaire **reprend** une case occupée en
+> y ramenant une unité.
+
 ---
 
 ## 3. Les 6 primitives partagées (la vraie raison du minimalisme)
