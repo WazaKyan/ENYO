@@ -133,6 +133,14 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
   (jeton à la couleur de la nation, forme par type : carré/triangle/losange, **barre
   de PV**) ; l'unité sélectionnée est surlignée. Planche d'aperçu :
   `harness --unit-sheet f.png`.
+- **Contrôles révisés** : **« Fonder » retiré** (le territoire s'acquiert via
+  **Étendre** ; les nations démarrent avec de l'influence). Plus de bouton **« Fin
+  de tour »** : **Espace = lecture/pause** (la vitesse pilote le temps réel).
+- **Démolir / remplacer** : sous-menu Économie → **Démolir** (clic sur un bâtiment) ;
+  rembourse la moitié du coût × l'état de la case, puis on peut rebâtir autre chose.
+- **Infobulles** : survoler un **bouton de bâtiment/unité** affiche son **rôle + coût**
+  (+ stats pour les unités) ; survoler une **ressource** (chips du HUD : argent, mat,
+  nour, hab, infl, sci) affiche son rôle. (`--hover x,y` pour capturer en headless.)
 - **Conquête (S5/S6)** : les cases ennemies **occupées** par tes unités sont
   **hachurées** (couleur de l'occupant) ; le HUD affiche, par guerre,
   `GUERRE N{e}: score/seuil` (capitulation à > 75 % de la valeur ennemie). Un

@@ -389,7 +389,8 @@ fn run_headless(args: &Args) {
                     );
                 }
                 app.selected = Some((app.cam_x, app.cam_y)); // aperçu du panneau
-                app.draw_game(wi, hi, -1, -1);
+                let (hx, hy) = args.hover.unwrap_or((-1, -1));
+                app.draw_game(wi, hi, hx, hy);
             }
         }
     }
@@ -787,13 +788,8 @@ impl App {
             .iter()
             .filter(|p| p.owner == self.player)
             .count();
-        let n = world.nation(self.player);
-        let kn = n.map(|n| n.knowledge).unwrap_or(0.0);
-        let (money, mat, infl) = n.map(|n| (n.money, n.materials, n.influence)).unwrap_or((0, 0, 0));
         let year = world.turn / 12;
         let month = world.turn % 12 + 1;
-        let house = n.map(|n| n.housing).unwrap_or(0);
-        let foodr = n.map(|n| n.food).unwrap_or(0);
         // Guerres en cours : score d'occupation / seuil de capitulation (> 75 %).
         let mut war = String::new();
         for &(a, b) in world.diplomacy.wars() {
@@ -810,8 +806,9 @@ impl App {
                 war.push_str(&format!("  GUERRE N{e}: {score}/{need}"));
             }
         }
+        // Les ressources sont rendues en « chips » survolables (cf. draw_game).
         self.stats = format!(
-            "An {year} M{month:02} N{}  {pop:.0}h {tiles}c {prov}p  |  argent {money}  mat {mat}  nour {foodr}  hab {house}  infl {infl}  sci {kn:.0}{war}",
+            "An {year} M{month:02} N{}  {pop:.0}h {tiles}c {prov}p{war}",
             self.player
         );
     }
@@ -1571,10 +1568,35 @@ impl App {
             });
             mark(&mut c, sel_unit_pos, 0x66_E0FF);
 
-            // Barre du haut.
+            // Infobulle éventuelle (dessinée en dernier, au-dessus de tout).
+            let mut tooltip: Option<Vec<String>> = None;
+
+            // Barre du haut + ressources en « chips » survolables (infobulle).
             c.fill_rect(0, 0, w, TOP_H, gui::PANEL);
             c.fill_rect(0, TOP_H, w, 1, gui::BORDER);
             c.text(10, 12, &self.stats, 2, gui::TEXT);
+            if let Some(res) = self.world.as_ref().and_then(|w| w.nation(self.player)).map(|n| {
+                [
+                    ("argent", n.money),
+                    ("mat", n.materials),
+                    ("nour", n.food),
+                    ("hab", n.housing),
+                    ("infl", n.influence),
+                    ("sci", n.knowledge as i64),
+                ]
+            }) {
+                let mut rx = 14 + gui::text_w(&self.stats, 2) + 18;
+                for (key, val) in res {
+                    let label = format!("{key} {val}");
+                    let cw = gui::text_w(&label, 2) + 10;
+                    let hov = (rx..rx + cw).contains(&mx) && (2..TOP_H - 2).contains(&my);
+                    c.text(rx + 5, 12, &label, 2, if hov { gui::GOOD } else { gui::TEXT_DIM });
+                    if hov {
+                        tooltip = Some(vec![resource_tooltip(key).to_string()]);
+                    }
+                    rx += cw + 4;
+                }
+            }
 
             // Barre du bas.
             c.fill_rect(0, h - BOT_H, w, BOT_H, gui::PANEL);
@@ -1609,6 +1631,19 @@ impl App {
                     _ => false,
                 };
                 b.draw(&mut c, hover, active);
+                if hover {
+                    let tip = match id {
+                        GameBtn::Tool(t) => tool_tooltip(*t),
+                        GameBtn::Research(_) => Some(vec![
+                            "Recherche".to_string(),
+                            "Depense de la science pour monter un palier de tech.".to_string(),
+                        ]),
+                        _ => None,
+                    };
+                    if tip.is_some() {
+                        tooltip = tip;
+                    }
+                }
             }
 
             // Message d'action (succès vert / rejet rouge).
@@ -1673,6 +1708,11 @@ impl App {
                     c.text(px0 + 10, py0 + 8 + i as i32 * 20, l, 1, gui::TEXT);
                 }
             }
+
+            // Infobulle (rôle + prix d'un bâtiment, rôle d'une ressource) en dernier.
+            if let Some(lines) = &tooltip {
+                draw_tooltip(&mut c, mx, my, w, h, lines);
+            }
         }
         self.buf = buf;
     }
@@ -1713,6 +1753,133 @@ fn unit_fr(k: UnitKind) -> &'static str {
         UnitKind::Infantry => "Infanterie",
         UnitKind::Archer => "Archers",
         UnitKind::Cavalry => "Cavalerie",
+    }
+}
+
+/// Rôle (1 ligne) d'un bâtiment, pour l'infobulle.
+fn building_role(b: Building) -> &'static str {
+    match b {
+        Building::City => "Produit de la population ; consomme de la nourriture.",
+        Building::Industry => "Produit des materiaux ; pollue lentement la case.",
+        Building::Commerce => "Transforme les materiaux en argent + habitation.",
+        Building::Infrastructure => "Relie les cases en reseau (main-d'oeuvre commune).",
+        Building::Education => "Produit de la science (exige un commerce connecte).",
+        Building::Military => "Produit de la force (pour recruter des unites).",
+        Building::Farm => "Produit de la nourriture (selon le terrain).",
+    }
+}
+
+/// Rôle (1 ligne) d'un type d'unité.
+fn unit_role(k: UnitKind) -> &'static str {
+    match k {
+        UnitKind::Infantry => "Robuste, corps a corps. Aucun malus de terrain.",
+        UnitKind::Archer => "Distance (portee 2), fragile. Malus en foret.",
+        UnitKind::Cavalry => "Rapide et puissante. Malus en terrain accidente.",
+    }
+}
+
+/// Ligne de coût « Cout: X argent[, Y mat][, Z hab] ».
+fn cost_line(money: i64, mat: i64, housing: i64) -> String {
+    let mut s = format!("Cout: {money} argent");
+    if mat > 0 {
+        s.push_str(&format!(", {mat} mat"));
+    }
+    if housing > 0 {
+        s.push_str(&format!(", {housing} hab"));
+    }
+    s
+}
+
+/// Infobulle (rôle + coût) d'un outil, si pertinente.
+fn tool_tooltip(t: Tool) -> Option<Vec<String>> {
+    Some(match t {
+        Tool::Build(b) => {
+            let (m, mat, h) = sim::build_cost(b);
+            vec![
+                building_fr(b).to_string(),
+                building_role(b).to_string(),
+                cost_line(m, mat, h),
+            ]
+        }
+        Tool::Create(k) => {
+            let s = sim::unit::unit_stats(k);
+            vec![
+                unit_fr(k).to_string(),
+                unit_role(k).to_string(),
+                format!(
+                    "Cout: {} argent + {} force (tech Fer {})",
+                    s.cost_money, s.cost_force, s.tech_fer
+                ),
+                format!(
+                    "PV {} - degats {} - portee {} - mouvement {}",
+                    s.max_hp, s.damage, s.range, s.moves
+                ),
+            ]
+        }
+        Tool::Demolish => vec![
+            "Demolir".to_string(),
+            "Retire le batiment (on peut rebatir autre chose).".to_string(),
+            "Rembourse la moitie du cout x l'etat de la case.".to_string(),
+        ],
+        Tool::Swarm => vec![
+            "Etendre".to_string(),
+            "Revendique une case voisine (2 clics).".to_string(),
+            format!("Coute {} influence ; source >= 1000 hab.", sim::SWARM_INFLUENCE),
+        ],
+        Tool::Units => vec![
+            "Unites".to_string(),
+            "Clic = selectionner une unite a soi ;".to_string(),
+            "re-clic = deplacer (case vide) ou attaquer (ennemi).".to_string(),
+        ],
+        Tool::War => vec![
+            "Guerre".to_string(),
+            "Declare la guerre (clic sur une case ennemie).".to_string(),
+        ],
+        Tool::Peace => vec![
+            "Paix".to_string(),
+            "Fait la paix (clic sur une case ennemie).".to_string(),
+        ],
+        Tool::None => vec![
+            "Inspecter".to_string(),
+            "Clic sur une case pour l'examiner.".to_string(),
+        ],
+    })
+}
+
+/// Infobulle d'une ressource du HUD (par clé courte).
+fn resource_tooltip(key: &str) -> &'static str {
+    match key {
+        "argent" => "Argent : batir, entretien, recruter des unites.",
+        "mat" => "Materiaux : produits par l'industrie ; batir / commerce.",
+        "nour" => "Nourriture : nourrit la population (au-dela de la subsistance), sinon famine.",
+        "hab" => "Habitation : produite par le commerce ; fonder des villes.",
+        "infl" => "Influence : +1/mois ; etendre le territoire.",
+        "sci" => "Science : produite par l'education ; payer la recherche.",
+        _ => "",
+    }
+}
+
+/// Dessine une infobulle (boîte sombre) près du curseur, bornée à l'écran.
+fn draw_tooltip(c: &mut Canvas, mx: i32, my: i32, w: i32, h: i32, lines: &[String]) {
+    if lines.is_empty() {
+        return;
+    }
+    let (pad, lh) = (6, 14);
+    let tw = lines.iter().map(|l| gui::text_w(l, 1)).max().unwrap_or(0);
+    let bw = tw + pad * 2;
+    let bh = lines.len() as i32 * lh + pad * 2;
+    let mut x0 = mx + 14;
+    let mut y0 = my + 16;
+    if x0 + bw > w {
+        x0 = (mx - bw - 8).max(0);
+    }
+    if y0 + bh > h {
+        y0 = (my - bh - 8).max(0);
+    }
+    c.blend_rect(x0, y0, bw, bh, gui::PANEL, 240);
+    c.rect_outline(x0, y0, bw, bh, gui::BORDER);
+    for (i, l) in lines.iter().enumerate() {
+        c.text(x0 + pad, y0 + pad + i as i32 * lh, l, 1, gui::TEXT);
     }
 }
 
@@ -1836,6 +2003,8 @@ struct Args {
     record: Option<String>,
     replay: Option<String>,
     debug_director: bool,
+    /// Position de survol simulée pour la capture headless (infobulles).
+    hover: Option<(i32, i32)>,
 }
 
 impl Args {
@@ -1856,6 +2025,7 @@ impl Args {
             record: None,
             replay: None,
             debug_director: false,
+            hover: None,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -1879,6 +2049,12 @@ impl Args {
                 "--record" => a.record = it.next(),
                 "--replay" => a.replay = it.next(),
                 "--debug-director" => a.debug_director = true,
+                "--hover" => {
+                    a.hover = it.next().and_then(|v| {
+                        let p: Vec<i32> = v.split(',').filter_map(|s| s.parse().ok()).collect();
+                        (p.len() == 2).then_some((p[0], p[1]))
+                    });
+                }
                 other => eprintln!("argument ignoré : {other}"),
             }
         }
