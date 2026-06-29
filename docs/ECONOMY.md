@@ -25,9 +25,13 @@
   privée de fermes **reflue vers la subsistance**. Remplace l'urbanisation auto d'E5.
   ✅ **fait (tranche B)**.
 - **Croissance = VILLES UNIQUEMENT + FAMINE** (choix joueur). ✅ **fait (tranche B)**.
-- **IA & genèse** : `spawn_nations` **fonde une ville** par nation (départ avec
-  `STARTING_HOUSING = 60`) ; l'IA bâtit une chaîne minimale **industrie → ferme →
-  commerce → ville** (un bâtiment/tour, selon ses ressources). ✅ **fait (tranche B)**.
+- **IA & genèse** : chaque nation démarre sur une case **accueillante** (capacité
+  ≥ `HOSPITABLE_CAP = 1500`, pour croître au-delà de 1000 et s'étendre — pas de
+  soft-lock), **tirée aléatoirement mais de façon seedée** (même graine ⇒ même
+  placement ⇒ rejeu identique). `spawn_nations` y **fonde une ville** (départ avec
+  `STARTING_HOUSING = 60`) ; l'IA bâtit ensuite une chaîne minimale **industrie →
+  ferme → commerce → ville** (un bâtiment/tour, selon ses ressources). ✅ **fait
+  (tranche B)**.
 
 > Le reste du document décrit la conception initiale ; en cas de divergence, la
 > section RÉVISION ci-dessus prime.

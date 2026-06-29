@@ -11,6 +11,7 @@ use std::collections::HashSet;
 
 use proto::{Building, Command};
 use sim::nation::{ESSOR, LIEN, TERROIR};
+use sim::rng::Rng;
 use sim::tile::TileKind;
 use sim::World;
 
@@ -206,29 +207,66 @@ fn find_attack(world: &World, nation: u16) -> Option<(usize, usize)> {
     None
 }
 
-/// Place `count` nations sur des terres productives bien réparties (déterministe).
+/// Capacité minimale d'une case « accueillante » : la ville de départ peut alors
+/// croître bien au-delà de 1000 (donc s'étendre), sans soft-lock de démarrage.
+const HOSPITABLE_CAP: f32 = 1500.0;
+
+/// Place `count` nations sur des terres **accueillantes** (haute capacité), tirées
+/// **aléatoirement mais de façon seedée** : même graine ⇒ même placement ⇒ rejeu
+/// identique (contrat de déterminisme). On conserve un espacement minimal, avec
+/// repli (capacité plus basse, puis distance relâchée) si la carte est avare.
 pub fn spawn_nations(world: &World, count: u16) -> Vec<Command> {
     let mut out = Vec::new();
     if count == 0 {
         return out;
     }
-    // Distance min calculée pour répartir les nations en 2D sur la carte.
+    // Candidats : on descend les paliers de capacité jusqu'à en avoir assez.
+    let mut candidates: Vec<(u32, u32)> = Vec::new();
+    for &thr in &[HOSPITABLE_CAP, 1000.0, 600.0, 400.0, 1.0] {
+        candidates.clear();
+        for y in 0..world.height {
+            for x in 0..world.width {
+                if world.tile(x, y).kind == TileKind::Land && world.capacity_at(x, y) >= thr {
+                    candidates.push((x, y));
+                }
+            }
+        }
+        if candidates.len() >= count as usize {
+            break;
+        }
+    }
+    if candidates.is_empty() {
+        return out;
+    }
+    // Mélange déterministe (Fisher–Yates) avec un RNG seedé indépendant de la
+    // worldgen (sel sur la graine) → tirage « aléatoire » mais rejouable.
+    let mut rng = Rng::new(world.seed ^ 0xA53C_9E2D_7F10_4B6B);
+    for i in (1..candidates.len()).rev() {
+        let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+        candidates.swap(i, j);
+    }
+    // Distance min pour répartir les nations, puis repli sans contrainte.
     let span = world.width.min(world.height) as f32;
     let min_dist = (span / (2.0 * (count as f32).sqrt())).max(10.0) as i64;
     let mut placed: Vec<(u32, u32)> = Vec::new();
-    'scan: for y in (0..world.height).step_by(5) {
-        for x in (0..world.width).step_by(5) {
-            if world.tile(x, y).kind != TileKind::Land || world.capacity_at(x, y) < 400.0 {
-                continue;
+    for &(x, y) in &candidates {
+        if placed.len() == count as usize {
+            break;
+        }
+        if placed
+            .iter()
+            .all(|&(px, py)| distance(x, y, px, py, world.width) >= min_dist)
+        {
+            placed.push((x, y));
+        }
+    }
+    if placed.len() < count as usize {
+        for &(x, y) in &candidates {
+            if placed.len() == count as usize {
+                break;
             }
-            if placed
-                .iter()
-                .all(|&(px, py)| distance(x, y, px, py, world.width) >= min_dist)
-            {
+            if !placed.contains(&(x, y)) {
                 placed.push((x, y));
-                if placed.len() == count as usize {
-                    break 'scan;
-                }
             }
         }
     }
