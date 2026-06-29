@@ -1,49 +1,57 @@
-//! Fenêtre de jeu ENYO (minifb) — Phase 7b.
+//! Fenêtre de jeu ENYO (minifb) — Phases A→C.
 //!
-//! Affiche le monde via un viewport pixel-art (`render::viewport_argb`), avec
-//! **pan** (WASD / flèches) et **zoom** (molette). La fenêtre est un simple
-//! consommateur passif du buffer de `render` : `sim` reste intouché, le
-//! déterminisme intact.
-//!
-//! Mode **agent** : `ui --headless --shot f.png` rend EXACTEMENT la même image
-//! que la fenêtre (même `RgbImage`), pour que l'agent puisse vérifier le rendu
-//! sans ouvrir de fenêtre.
-//!
-//! Phase A : affichage + navigation (le tour-par-tour jouable vient en Phase B+).
+//! Affichage pixel-art (viewport `render`) + jeu TOUR PAR TOUR.
+//! Contrôles : WASD/flèches = se déplacer · molette = zoom · **Espace = Fin de
+//! tour** (Step + Directeur + IA) · clic = inspecter une case · **F** = outil
+//! Fonder · **E** = outil Essaimer (2 clics) · **N** = aucun outil · Échap = quitter.
+//! Spectateur (`--spectator`) : **0/1/2** = pause / ×1 / ×2 (auto-tour).
+//! Le HUD textuel est dans la BARRE DE TITRE (pas de police à coder).
+//! Mode agent : `--headless --shot f.png` (même image que la fenêtre).
 
-use minifb::{Key, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
 use proto::Command;
 use sim::World;
 
 const WIN_W: u32 = 1280;
 const WIN_H: u32 = 720;
 
+#[derive(PartialEq, Clone, Copy)]
+enum Tool {
+    None,
+    Found,
+    Swarm,
+}
+
+/// Résout un tour : Step + Directeur + IA des autres nations (toutes si spectateur).
+fn end_turn(world: &mut World, player: u16, nations: u16, spectator: bool) {
+    world.apply(Command::Step);
+    for cmd in ai::direct(world, player) {
+        world.apply(cmd);
+    }
+    for nid in 0..nations {
+        if !spectator && nid == player {
+            continue; // le joueur contrôle sa nation lui-même
+        }
+        for cmd in ai::plan(world, nid) {
+            world.apply(cmd);
+        }
+    }
+}
+
 fn main() {
     let args = Args::parse();
-
-    // Construit un monde peuplé (même boucle que le harness) pour avoir à voir.
     let mut world = World::new(args.seed, 800, 500);
     for cmd in ai::spawn_nations(&world, args.nations) {
         world.apply(cmd);
     }
     for _ in 0..args.pre_turns {
-        world.apply(Command::Step);
-        for cmd in ai::direct(&world, args.player) {
-            world.apply(cmd);
-        }
-        for nid in 0..args.nations {
-            for cmd in ai::plan(&world, nid) {
-                world.apply(cmd);
-            }
-        }
+        end_turn(&mut world, args.player, args.nations, true);
     }
 
-    // Caméra initiale : centrée sur la nation du joueur (sinon centre de carte).
     let (cam0_x, cam0_y) = render::nation_bbox(&world, args.player, 0)
         .map(|(x, y, w, h)| (x + w / 2, y + h / 2))
         .unwrap_or((world.width / 2, world.height / 2));
 
-    // Mode agent : rend la même image que la fenêtre, en PNG.
     if args.headless {
         let path = args.shot.as_deref().unwrap_or("out/ui.png");
         if let Some(p) = std::path::Path::new(path).parent() {
@@ -58,21 +66,25 @@ fn main() {
         return;
     }
 
-    // Fenêtre interactive.
-    let mut window = Window::new(
-        "ENYO",
-        WIN_W as usize,
-        WIN_H as usize,
-        WindowOptions::default(),
-    )
-    .expect("ouverture de la fenêtre");
+    let mut window = Window::new("ENYO", WIN_W as usize, WIN_H as usize, WindowOptions::default())
+        .expect("ouverture de la fenêtre");
     window.set_target_fps(30);
 
     let mut cam_x = cam0_x;
     let mut cam_y = cam0_y;
     let mut px = args.px;
+    let mut tool = Tool::None;
+    let mut swarm_src: Option<(u32, u32)> = None;
+    let mut selected: Option<(u32, u32)> = None;
+    let mut speed: u32 = if args.spectator { 1 } else { 0 }; // 0=pause,1=x1,2=x2
+    let mut frame: u64 = 0;
+    let mut mouse_was_down = false;
+    let mut dirty = true;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        frame = frame.wrapping_add(1);
+
+        // Déplacement (touche maintenue).
         let pan = 2;
         if window.is_key_down(Key::A) || window.is_key_down(Key::Left) {
             cam_x = cam_x.saturating_sub(pan);
@@ -94,11 +106,139 @@ fn main() {
             }
         }
 
+        // Outils.
+        if window.is_key_pressed(Key::F, KeyRepeat::No) {
+            tool = Tool::Found;
+            swarm_src = None;
+            dirty = true;
+        }
+        if window.is_key_pressed(Key::E, KeyRepeat::No) {
+            tool = Tool::Swarm;
+            swarm_src = None;
+            dirty = true;
+        }
+        if window.is_key_pressed(Key::N, KeyRepeat::No) {
+            tool = Tool::None;
+            swarm_src = None;
+            dirty = true;
+        }
+
+        // Vitesse (spectateur).
+        if window.is_key_pressed(Key::Key0, KeyRepeat::No) {
+            speed = 0;
+        }
+        if window.is_key_pressed(Key::Key1, KeyRepeat::No) {
+            speed = 1;
+        }
+        if window.is_key_pressed(Key::Key2, KeyRepeat::No) {
+            speed = 2;
+        }
+
+        // Fin de tour : manuelle (Espace) ou auto (spectateur selon la vitesse).
+        let mut stepped = false;
+        if window.is_key_pressed(Key::Space, KeyRepeat::No) {
+            end_turn(&mut world, args.player, args.nations, args.spectator);
+            stepped = true;
+        }
+        if args.spectator && speed > 0 {
+            let interval: u64 = if speed >= 2 { 15 } else { 30 };
+            if frame.is_multiple_of(interval) {
+                end_turn(&mut world, args.player, args.nations, true);
+                stepped = true;
+            }
+        }
+        if stepped {
+            dirty = true;
+        }
+
+        // Clic gauche : inspecter / agir selon l'outil.
+        let left_down = window.get_mouse_down(MouseButton::Left);
+        if left_down && !mouse_was_down {
+            if let Some((mx, my)) = window.get_mouse_pos(MouseMode::Discard) {
+                let (x0, y0, _, _, pxe) = render::viewport_rect(&world, cam_x, cam_y, px, WIN_W, WIN_H);
+                let tx = x0 + (mx as u32) / pxe;
+                let ty = y0 + (my as u32) / pxe;
+                if tx < world.width && ty < world.height {
+                    selected = Some((tx, ty));
+                    match tool {
+                        Tool::Found => {
+                            world.apply(Command::Settle {
+                                x: tx,
+                                y: ty,
+                                nation: args.player,
+                                population: 300,
+                            });
+                        }
+                        Tool::Swarm => {
+                            if let Some((sx, sy)) = swarm_src.take() {
+                                world.apply(Command::Swarm {
+                                    from_x: sx,
+                                    from_y: sy,
+                                    to_x: tx,
+                                    to_y: ty,
+                                });
+                            } else {
+                                swarm_src = Some((tx, ty));
+                            }
+                        }
+                        Tool::None => {}
+                    }
+                    dirty = true;
+                }
+            }
+        }
+        mouse_was_down = left_down;
+
+        // HUD (barre de titre) — recalculé seulement quand l'état change.
+        if dirty {
+            window.set_title(&hud(&world, &args, tool, selected));
+            dirty = false;
+        }
+
         let buf = render::viewport_argb(&world, cam_x, cam_y, px, WIN_W, WIN_H);
         window
             .update_with_buffer(&buf, WIN_W as usize, WIN_H as usize)
             .expect("affichage");
     }
+}
+
+/// Construit la ligne de HUD affichée dans la barre de titre.
+fn hud(world: &World, args: &Args, tool: Tool, selected: Option<(u32, u32)>) -> String {
+    let (pop, tiles) = world.nation_stats(args.player);
+    let prov = world
+        .provinces()
+        .iter()
+        .filter(|p| p.owner == args.player)
+        .count();
+    let tech = world.nation(args.player).map(|n| n.tech).unwrap_or_default();
+    let year = world.turn / 12;
+    let month = world.turn % 12 + 1;
+    let mode = if args.spectator { "SPECTATEUR" } else { "JEU" };
+    let toolname = match tool {
+        Tool::None => "—",
+        Tool::Found => "Fonder",
+        Tool::Swarm => "Essaimer",
+    };
+    let mut s = format!(
+        "ENYO | An {year} M{month} | {mode} N{} : {pop:.0} hab, {tiles} cases, {prov} prov, tech {tech:?} | Outil: {toolname} (F/E/N, Espace=fin de tour)",
+        args.player
+    );
+    if let Some((tx, ty)) = selected {
+        let t = world.tile(tx, ty);
+        let owner = t
+            .owner
+            .map(|o| format!("N{o}"))
+            .unwrap_or_else(|| "libre".to_string());
+        s.push_str(&format!(
+            " || Case ({tx},{ty}) {:?} | pop {:.0} | dev {:.2} | cap {:.0} | force {:.0} | {owner}",
+            t.biome,
+            t.population,
+            t.development,
+            world.capacity_at(tx, ty),
+            t.force,
+        ));
+    }
+    s
 }
 
 /// Arguments de la ligne de commande.
@@ -108,6 +248,7 @@ struct Args {
     player: u16,
     pre_turns: usize,
     px: u32,
+    spectator: bool,
     headless: bool,
     shot: Option<String>,
 }
@@ -118,8 +259,9 @@ impl Args {
             seed: 2026,
             nations: 8,
             player: 0,
-            pre_turns: 120,
+            pre_turns: 0,
             px: 16,
+            spectator: false,
             headless: false,
             shot: None,
         };
@@ -151,6 +293,7 @@ impl Args {
                         a.px = v;
                     }
                 }
+                "--spectator" => a.spectator = true,
                 "--headless" => a.headless = true,
                 "--shot" => a.shot = it.next(),
                 other => eprintln!("argument ignoré : {other}"),

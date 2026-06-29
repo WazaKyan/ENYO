@@ -81,6 +81,24 @@ fn clamp_cam(cam: u32, span: u32, max: u32) -> u32 {
     cam.saturating_sub(span / 2).min(max.saturating_sub(span))
 }
 
+/// (x0, y0, cols, rows, px) du viewport — source unique partagée par le rendu
+/// ET le mapping souris→case (l'UI en a besoin pour les clics).
+pub fn viewport_rect(
+    world: &World,
+    cam_x: u32,
+    cam_y: u32,
+    px: u32,
+    win_w: u32,
+    win_h: u32,
+) -> (u32, u32, u32, u32, u32) {
+    let px = px.clamp(4, 64);
+    let cols = (win_w / px).max(1);
+    let rows = (win_h / px).max(1);
+    let x0 = clamp_cam(cam_x, cols, world.width);
+    let y0 = clamp_cam(cam_y, rows, world.height);
+    (x0, y0, cols, rows, px)
+}
+
 /// Viewport → buffer ARGB (`0x00RRGGBB`) de `win_w`×`win_h`, pour minifb.
 /// La caméra (en cases) est centrée ; le pixel fenêtre == le pixel PNG.
 pub fn viewport_argb(
@@ -91,11 +109,7 @@ pub fn viewport_argb(
     win_w: u32,
     win_h: u32,
 ) -> Vec<u32> {
-    let px = px.clamp(4, 64);
-    let cols = (win_w / px).max(1);
-    let rows = (win_h / px).max(1);
-    let x0 = clamp_cam(cam_x, cols, world.width);
-    let y0 = clamp_cam(cam_y, rows, world.height);
+    let (x0, y0, cols, rows, px) = viewport_rect(world, cam_x, cam_y, px, win_w, win_h);
     let img = region(world, x0, y0, cols, rows, px);
     let mut buf = vec![0u32; (win_w * win_h) as usize];
     let iw = img.width().min(win_w);
@@ -120,11 +134,7 @@ pub fn viewport_png(
     win_h: u32,
     path: &str,
 ) -> Result<(), String> {
-    let px = px.clamp(4, 64);
-    let cols = (win_w / px).max(1);
-    let rows = (win_h / px).max(1);
-    let x0 = clamp_cam(cam_x, cols, world.width);
-    let y0 = clamp_cam(cam_y, rows, world.height);
+    let (x0, y0, cols, rows, px) = viewport_rect(world, cam_x, cam_y, px, win_w, win_h);
     region(world, x0, y0, cols, rows, px)
         .save_with_format(path, image::ImageFormat::Png)
         .map_err(|e| e.to_string())
