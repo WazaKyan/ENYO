@@ -34,8 +34,9 @@ fn union(root: &mut [u32], a: u32, b: u32) {
 pub struct Networks {
     width: i64,
     height: i64,
-    root: Vec<u32>,   // racine union-find par index (pertinent pour les cases infra)
-    served: Vec<f32>, // population desservie par le réseau dont la racine est cet index
+    root: Vec<u32>,           // racine union-find par index (cases infra)
+    served: Vec<f32>,         // population desservie par le réseau de cette racine
+    net_commerce: Vec<bool>,  // un commerce touche-t-il le réseau de cette racine ?
 }
 
 impl Networks {
@@ -104,11 +105,38 @@ impl Networks {
             }
         }
 
+        // 3) Présence d'un commerce sur chaque réseau (un commerce adjacent à une
+        //    infra rend tout le réseau « relié au commerce »). Pour l'éducation (E3).
+        let mut net_commerce = vec![false; n];
+        for idx in 0..n {
+            if tiles[idx].building != Some(Building::Commerce) {
+                continue;
+            }
+            let Some(owner) = tiles[idx].owner else {
+                continue;
+            };
+            let (x, y) = (idx as i64 % w, idx as i64 / w);
+            for (dx, dy) in ORTHO {
+                let nx = (x + dx).rem_euclid(w);
+                let ny = y + dy;
+                if ny < 0 || ny >= h {
+                    continue;
+                }
+                let v = (ny * w + nx) as usize;
+                if tiles[v].building == Some(Building::Infrastructure)
+                    && tiles[v].owner == Some(owner)
+                {
+                    net_commerce[root[v] as usize] = true;
+                }
+            }
+        }
+
         Networks {
             width: w,
             height: h,
             root,
             served,
+            net_commerce,
         }
     }
 
@@ -139,9 +167,9 @@ impl Networks {
         local.max(best_net)
     }
 
-    /// Y a-t-il une case `building` dans la région desservie par un réseau infra
-    /// adjacent à `idx` (ou dans son voisinage direct) ? (Servira l'éducation, E3.)
-    pub fn cluster_has(&self, tiles: &[Tile], idx: usize, owner: u16, building: Building) -> bool {
+    /// Un **commerce** est-il connecté à `idx` — en voisin direct, ou via un réseau
+    /// d'infrastructure adjacent ? (Condition de fonctionnement de l'éducation, E3.)
+    pub fn has_commerce_connected(&self, tiles: &[Tile], idx: usize, owner: u16) -> bool {
         let (x, y) = (idx as i64 % self.width, idx as i64 / self.width);
         for (dx, dy) in ORTHO {
             let nx = (x + dx).rem_euclid(self.width);
@@ -150,8 +178,16 @@ impl Networks {
                 continue;
             }
             let v = (ny * self.width + nx) as usize;
-            if tiles[v].owner == Some(owner) && tiles[v].building == Some(building) {
-                return true;
+            if tiles[v].owner != Some(owner) {
+                continue;
+            }
+            if tiles[v].building == Some(Building::Commerce) {
+                return true; // commerce voisin direct
+            }
+            if tiles[v].building == Some(Building::Infrastructure)
+                && self.net_commerce[self.root[v] as usize]
+            {
+                return true; // commerce sur le réseau adjacent
             }
         }
         false

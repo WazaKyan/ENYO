@@ -193,6 +193,63 @@ fn build_costs_money_and_industry_produces_materials() {
     );
 }
 
+/// Gain de savoir sur 10 mois quand on pose industrie + (commerce?) + université
+/// sur 3 cases alignées et peuplées. La base densité est identique dans les deux
+/// cas → la différence isole la production de l'université (qui exige un commerce).
+fn science_gain(with_commerce: bool) -> f32 {
+    let mut w = World::new(13, 80, 60);
+    let [a, b, c] = three_land_in_row(&w);
+    for p in [a, b, c] {
+        w.apply(Command::Settle {
+            x: p.0,
+            y: p.1,
+            nation: 0,
+            population: 1500,
+        });
+    }
+    // Industrie sur A : accumuler les matériaux (commerce 20 + université 30).
+    w.apply(Command::Build {
+        x: a.0,
+        y: a.1,
+        nation: 0,
+        building: Building::Industry,
+    });
+    for _ in 0..40 {
+        w.apply(Command::Step);
+    }
+    if with_commerce {
+        let ev = w.apply(Command::Build {
+            x: b.0,
+            y: b.1,
+            nation: 0,
+            building: Building::Commerce,
+        });
+        assert!(matches!(ev[0], Event::Built { .. }), "commerce bâti");
+    }
+    let ev = w.apply(Command::Build {
+        x: c.0,
+        y: c.1,
+        nation: 0,
+        building: Building::Education,
+    });
+    assert!(matches!(ev[0], Event::Built { .. }), "université bâtie");
+    let k0 = w.nation(0).unwrap().knowledge;
+    for _ in 0..10 {
+        w.apply(Command::Step);
+    }
+    w.nation(0).unwrap().knowledge - k0
+}
+
+#[test]
+fn education_makes_science_only_with_commerce() {
+    let with = science_gain(true);
+    let without = science_gain(false);
+    assert!(
+        with > without,
+        "l'université connectée à un commerce produit plus de science ({without} -> {with})"
+    );
+}
+
 #[test]
 fn build_rejected_when_unaffordable_or_invalid() {
     let mut w = World::new(7, 80, 60);

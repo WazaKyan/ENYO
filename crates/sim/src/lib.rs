@@ -48,6 +48,10 @@ const COMMERCE_BASE: f32 = 10.0;
 const MONEY_PER_MAT: i64 = 3;
 /// Habitation produite par matériau transformé par le commerce.
 const HOUSING_PER_MAT: i64 = 1;
+/// Science/mois d'une université idéale (main-d'œuvre pleine) — vraie source de tech.
+const SCIENCE_BASE: f32 = 3.0;
+/// Entretien mensuel (argent) d'une université ; impayé → elle chôme.
+const EDUCATION_UPKEEP: i64 = 3;
 
 /// L'état complet de la partie — reconstructible depuis une graine et une suite
 /// de commandes (donc rejouable).
@@ -643,6 +647,7 @@ impl World {
         let mut materials_gain = vec![0i64; self.nations.len()];
         let mut money_gain = vec![0i64; self.nations.len()];
         let mut housing_gain = vec![0i64; self.nations.len()];
+        let mut science_gain = vec![0.0f32; self.nations.len()];
         for y in 0..height {
             for x in 0..width {
                 let idx = y as usize * width as usize + x as usize;
@@ -682,8 +687,18 @@ impl World {
                             housing_gain[ni] += used * HOUSING_PER_MAT;
                         }
                     }
-                    // Infrastructure : aucun produit (elle connecte) ; les autres
-                    // bâtiments (éducation, militaire) viendront en E3/E4.
+                    // Université : exige main-d'œuvre + commerce connecté + entretien
+                    // payé ; sinon elle chôme (arm `_`). Produit de la science.
+                    Building::Education
+                        if cpop > 0.0
+                            && networks.has_commerce_connected(&self.tiles, idx, owner)
+                            && self.nations[ni].money >= EDUCATION_UPKEEP =>
+                    {
+                        self.nations[ni].money -= EDUCATION_UPKEEP;
+                        let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
+                        science_gain[ni] += SCIENCE_BASE * workforce;
+                    }
+                    // Infrastructure connecte (aucun produit) ; Militaire = E4.
                     _ => {}
                 }
             }
@@ -692,6 +707,7 @@ impl World {
             self.nations[i].materials += materials_gain[i];
             self.nations[i].money += money_gain[i];
             self.nations[i].housing += housing_gain[i];
+            self.nations[i].knowledge += science_gain[i];
         }
     }
 
@@ -708,8 +724,8 @@ impl World {
             return reject("pas une terre"); // défense en profondeur (cf. settle/swarm)
         }
         // Fail-closed : ne pas facturer un bâtiment dont la production n'existe pas
-        // encore (Éducation = E3, Militaire = E4). Évite de brûler des ressources.
-        if matches!(building, Building::Education | Building::Military) {
+        // encore (Militaire = E4). Évite de brûler des ressources.
+        if matches!(building, Building::Military) {
             return reject("bâtiment pas encore disponible");
         }
         if self.tiles[idx].building.is_some() {
