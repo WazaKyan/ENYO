@@ -7,8 +7,9 @@
 //! Max, boutons en bas). L'horloge murale est confinée ici (`RealtimeClock`),
 //! `sim` ne la voit jamais → déterminisme/rejeu intacts (1 tick = 1 mois).
 //! Espace = UN tick manuel (utile en pause). clic = inspecter / agir · F =
-//! Fonder · E = Essaimer (2 clics) · N = inspecter · 1-4 = recherche (mode Jeu) ·
-//! WASD = bouger · molette = zoom · Échap = retour menu.
+//! Fonder · E = Essaimer (2 clics) · M = Mobiliser · B = Marcher (2 clics, combat
+//! si ennemi) · G = Guerre · P = Paix (clic sur case ennemie) · N = inspecter ·
+//! 1-4 = recherche (mode Jeu) · WASD = bouger · molette = zoom · Échap = menu.
 //! En spectateur / rejeu : 0-4 = vitesse au clavier.
 //!
 //! Mode agent : `--headless --shot f.png [--screen menu|settings|game]`
@@ -24,7 +25,7 @@ use proto::{Command, Event};
 use sim::World;
 
 const TOP_H: i32 = 40;
-const BOT_H: i32 = 52;
+const BOT_H: i32 = 88; // deux rangées de boutons (outils ; recherche + vitesse)
 
 /// Période d'un mois à la vitesse x1 (horloge murale, microsecondes entières).
 const BASE_TICK_US: i64 = 500_000;
@@ -60,6 +61,10 @@ enum Tool {
     None,
     Found,
     Swarm,
+    Mobilize,
+    March,
+    War,
+    Peace,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -140,7 +145,7 @@ impl Input {
 }
 
 /// Touches surveillées chaque frame (pour bâtir l'Input depuis la fenêtre).
-const WATCH: [Key; 18] = [
+const WATCH: [Key; 22] = [
     Key::A,
     Key::D,
     Key::W,
@@ -153,6 +158,10 @@ const WATCH: [Key; 18] = [
     Key::F,
     Key::E,
     Key::N,
+    Key::M,
+    Key::B,
+    Key::G,
+    Key::P,
     Key::Space,
     Key::Key0,
     Key::Key1,
@@ -213,7 +222,7 @@ struct App {
     px: u32,
     tool: Tool,
     selected: Option<(u32, u32)>,
-    swarm_src: Option<(u32, u32)>,
+    pending_src: Option<(u32, u32)>,
     speed: u32,
     last_instant: Option<Instant>,
     acc_us: i64,
@@ -444,6 +453,11 @@ fn run_audit(args: &Args) {
     let p = center_of(&app.game_buttons(w, h), GameBtn::Research(0));
     a.step(&mut app, &Input::click_at(p.0, p.1), "recherche_essor");
 
+    // Outil militaire : Mobiliser sur la case centrale (du joueur) -> force.
+    let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::Mobilize));
+    a.step(&mut app, &Input::click_at(p.0, p.1), "outil_mobiliser");
+    a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "mobiliser_case");
+
     // Inspecter une case (panneau).
     let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::None));
     a.step(&mut app, &Input::click_at(p.0, p.1), "outil_inspecter");
@@ -493,7 +507,7 @@ impl App {
             px: args.px,
             tool: Tool::None,
             selected: None,
-            swarm_src: None,
+            pending_src: None,
             speed: 0,
             last_instant: None,
             acc_us: 0,
@@ -587,7 +601,7 @@ impl App {
         self.px = self.config.px;
         self.tool = Tool::None;
         self.selected = None;
-        self.swarm_src = None;
+        self.pending_src = None;
         self.speed = if spectator { 1 } else { 0 }; // Jouer = départ en pause
         self.last_instant = None;
         self.acc_us = 0;
@@ -812,15 +826,20 @@ impl App {
             return;
         }
         // Outils + recherche : uniquement quand on JOUE (pas en rejeu).
+        // (A/W/S/D sont le déplacement → on évite ces lettres pour les outils.)
         if !self.replay_mode {
-            if input.key_pressed(Key::F) {
-                self.set_tool(Tool::Found);
-            }
-            if input.key_pressed(Key::E) {
-                self.set_tool(Tool::Swarm);
-            }
-            if input.key_pressed(Key::N) {
-                self.set_tool(Tool::None);
+            for (k, t) in [
+                (Key::F, Tool::Found),
+                (Key::E, Tool::Swarm),
+                (Key::N, Tool::None),
+                (Key::M, Tool::Mobilize),
+                (Key::B, Tool::March),
+                (Key::G, Tool::War),
+                (Key::P, Tool::Peace),
+            ] {
+                if input.key_pressed(k) {
+                    self.set_tool(t);
+                }
             }
             if !self.spectator {
                 for (k, b) in [
@@ -960,7 +979,7 @@ impl App {
 
     fn set_tool(&mut self, t: Tool) {
         self.tool = t;
-        self.swarm_src = None;
+        self.pending_src = None;
     }
 
     fn research(&mut self, branch: u8) {
@@ -1021,6 +1040,14 @@ impl App {
             return; // en rejeu : inspection seulement
         }
         let player = self.player;
+        let (pop, owner) = self
+            .world
+            .as_ref()
+            .map(|w| {
+                let t = w.tile(tx, ty);
+                (t.population, t.owner)
+            })
+            .unwrap_or((0.0, None));
         match self.tool {
             Tool::Found => {
                 let ev = self.apply(Command::Settle {
@@ -1029,30 +1056,77 @@ impl App {
                     nation: player,
                     population: 300,
                 });
-                if let Some(m) = feedback(&ev) {
-                    self.last_msg = m;
-                }
-                self.stats_dirty = true;
+                self.report(&ev);
             }
             Tool::Swarm => {
-                if let Some((sx, sy)) = self.swarm_src.take() {
+                if let Some((sx, sy)) = self.pending_src.take() {
                     let ev = self.apply(Command::Swarm {
                         from_x: sx,
                         from_y: sy,
                         to_x: tx,
                         to_y: ty,
                     });
-                    if let Some(m) = feedback(&ev) {
-                        self.last_msg = m;
-                    }
-                    self.stats_dirty = true;
+                    self.report(&ev);
                 } else {
-                    self.swarm_src = Some((tx, ty));
-                    self.last_msg = format!("source ({tx},{ty}) - clique la cible");
+                    self.pending_src = Some((tx, ty));
+                    self.last_msg = format!("source essaimage ({tx},{ty}) - clique la cible");
                 }
             }
+            Tool::Mobilize => {
+                let amount = (pop * 0.5) as u32;
+                let ev = self.apply(Command::Mobilize {
+                    x: tx,
+                    y: ty,
+                    nation: player,
+                    amount,
+                });
+                self.report(&ev);
+            }
+            Tool::March => {
+                if let Some((sx, sy)) = self.pending_src.take() {
+                    let ev = self.apply(Command::March {
+                        from_x: sx,
+                        from_y: sy,
+                        to_x: tx,
+                        to_y: ty,
+                    });
+                    self.report(&ev);
+                } else {
+                    self.pending_src = Some((tx, ty));
+                    self.last_msg = format!("source marche ({tx},{ty}) - clique la cible");
+                }
+            }
+            Tool::War => match owner {
+                Some(o) if o != player => {
+                    let ev = self.apply(Command::DeclareWar {
+                        nation: player,
+                        target: o,
+                    });
+                    self.report(&ev);
+                }
+                Some(_) => self.last_msg = "REJET : c'est ta propre case".to_string(),
+                None => self.last_msg = "REJET : case libre (aucune nation)".to_string(),
+            },
+            Tool::Peace => match owner {
+                Some(o) if o != player => {
+                    let ev = self.apply(Command::MakePeace {
+                        nation: player,
+                        target: o,
+                    });
+                    self.report(&ev);
+                }
+                _ => self.last_msg = "REJET : choisis une case ennemie".to_string(),
+            },
             Tool::None => {}
         }
+    }
+
+    /// Met à jour le message d'action + marque les stats à recalculer.
+    fn report(&mut self, ev: &[Event]) {
+        if let Some(m) = feedback(ev) {
+            self.last_msg = m;
+        }
+        self.stats_dirty = true;
     }
 
     // ---- Mises en page des boutons --------------------------------------
@@ -1112,40 +1186,46 @@ impl App {
         let mxt = mxn - pad - turn_w;
         v.push((GameBtn::EndTurn, Button::new(mxt, 6, turn_w, bh, "Fin de tour")));
 
-        // Bas : outils puis recherche (ou vitesse en spectateur).
-        let by = h - BOT_H + 12;
+        // Bas, 2 rangées : rangée 1 = outils ; rangée 2 = recherche + vitesse.
         let tbh = 28;
-        let mut x = pad;
+        let row1 = h - BOT_H + 8;
+        let row2 = h - BOT_H + 44;
         let playing = !self.spectator && !self.replay_mode;
-        // Outils : Inspecter toujours ; Fonder/Essaimer seulement en mode Jeu.
+
+        // Rangée 1 : outils (Inspecter toujours ; le reste seulement en mode Jeu).
         let tools: &[(&str, Tool)] = if playing {
             &[
                 ("Inspecter", Tool::None),
                 ("Fonder", Tool::Found),
                 ("Essaimer", Tool::Swarm),
+                ("Mobiliser", Tool::Mobilize),
+                ("Marcher", Tool::March),
+                ("Guerre", Tool::War),
+                ("Paix", Tool::Peace),
             ]
         } else {
             &[("Inspecter", Tool::None)]
         };
+        let mut x = pad;
         for (lbl, t) in tools {
             let bw = gui::text_w(lbl, 2) + 18;
-            v.push((GameBtn::Tool(*t), Button::new(x, by, bw, tbh, *lbl)));
+            v.push((GameBtn::Tool(*t), Button::new(x, row1, bw, tbh, *lbl)));
             x += bw + 6;
         }
-        // Recherche : seulement en mode Jeu (les chiffres 1-4 servent a ca).
+
+        // Rangée 2 : recherche (mode Jeu) puis vitesse (tous modes).
+        let mut x = pad;
         if playing {
-            x += 24;
             for (i, lbl) in ["Essor", "Terroir", "Fer", "Lien"].iter().enumerate() {
                 let bw = gui::text_w(lbl, 2) + 18;
-                v.push((GameBtn::Research(i as u8), Button::new(x, by, bw, tbh, *lbl)));
+                v.push((GameBtn::Research(i as u8), Button::new(x, row2, bw, tbh, *lbl)));
                 x += bw + 6;
             }
+            x += 24;
         }
-        // Vitesse : dans TOUS les modes (le temps reel s'applique partout).
-        x += 24;
         for (lbl, s) in [("Pause", 0u32), ("x1", 1), ("x2", 2), ("x4", 3), ("Max", 4)] {
             let bw = gui::text_w(lbl, 2) + 16;
-            v.push((GameBtn::Speed(s), Button::new(x, by, bw, tbh, lbl)));
+            v.push((GameBtn::Speed(s), Button::new(x, row2, bw, tbh, lbl)));
             x += bw + 6;
         }
         v
@@ -1272,6 +1352,10 @@ impl App {
             Tool::None => "Inspecter",
             Tool::Found => "Fonder",
             Tool::Swarm => "Essaimer",
+            Tool::Mobilize => "Mobiliser",
+            Tool::March => "Marcher",
+            Tool::War => "Guerre",
+            Tool::Peace => "Paix",
         };
         let tech = self
             .world
@@ -1293,7 +1377,7 @@ impl App {
                     }
                 }
             };
-            mark(&mut c, self.swarm_src, gui::GOOD);
+            mark(&mut c, self.pending_src, gui::GOOD);
             mark(&mut c, self.selected, gui::TEXT);
 
             // Barre du haut.
@@ -1434,6 +1518,29 @@ fn feedback(events: &[Event]) -> Option<String> {
                     .unwrap_or("?");
                 return Some(format!("{b} palier {tier}"));
             }
+            Event::Mobilized { x, y, amount, .. } => {
+                return Some(format!("mobilise ({x},{y}) +{amount:.0} force"))
+            }
+            Event::Marched {
+                to_x, to_y, force, ..
+            } => return Some(format!("marche vers ({to_x},{to_y}) {force:.0} force")),
+            Event::BattleResolved {
+                x,
+                y,
+                conquered,
+                attacker_losses,
+                defender_losses,
+                ..
+            } => {
+                let issue = if *conquered { "conquise" } else { "repoussee" };
+                return Some(format!(
+                    "bataille ({x},{y}) {issue} (pertes {attacker_losses:.0}/{defender_losses:.0})"
+                ));
+            }
+            Event::WarDeclared { target, .. } => {
+                return Some(format!("GUERRE declaree a N{target}"))
+            }
+            Event::PeaceMade { target, .. } => return Some(format!("paix avec N{target}")),
             _ => {}
         }
     }

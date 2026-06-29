@@ -101,7 +101,16 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
   inspection libre, aucune action joueur. Vérifié **au bit près** : checksum
   identique enregistrement vs rejeu (`--replay --headless` l'imprime).
 
+### Fait aussi
+- **Militaire & diplomatie joueur** : barre du bas à **2 rangées** ; outils
+  **Mobiliser** (M, case possédée → force), **Marcher** (B, 2 clics, combat si
+  cible ennemie), **Guerre** (G) et **Paix** (P) (clic sur une case ennemie →
+  `DeclareWar`/`MakePeace` sur son propriétaire). Réutilise S5/S6 (mêmes commandes
+  que l'IA). Retours d'action étendus (mobilisation, marche, bataille, guerre, paix).
+- **Temps réel** (Phase 8) : horloge murale, Pause/×1/×2/×4/Max — voir `docs/REALTIME.md`.
+- **Directeur temps réel** (version intention) + audit cruel + correctifs — voir
+  `docs/AUDIT-DIRECTEUR.md`.
+
 ### Reste (D/E)
-- Outils **militaires** (Mobiliser/Marcher) et **diplomatie** (guerre/paix) pour
-  le joueur (actuellement IA seule).
-- Équilibrage des vitesses croissance/recherche.
+- Équilibrage des vitesses croissance/recherche/tech.
+- Durcissement audit restant (M3 : checksum d'intégrité du `.rec`, golden live↔rejeu).
