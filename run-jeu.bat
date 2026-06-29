@@ -18,14 +18,11 @@ if errorlevel 1 (
 
 echo.
 echo ============================================================
-echo  Lancement. Commandes :
-echo    WASD / fleches  = se deplacer        molette = zoom
-echo    ESPACE          = fin de tour (le monde evolue)
-echo    F               = outil Fonder   (puis clic sur une case)
-echo    E               = outil Essaimer (2 clics : source puis cible)
-echo    N               = aucun outil     clic = inspecter une case
-echo    1 2 3 4         = recherche (Essor / Terroir / Fer / Lien)
-echo    Echap           = quitter
-echo  (les infos s'affichent dans la barre de titre de la fenetre)
+echo  Lancement... un menu s'ouvre :
+echo    Jouer        : developpe ta nation
+echo    Spectateur   : regarde le monde tourner tout seul
+echo    Parametres   : graine, nations, zoom, plein ecran
+echo  Tout se fait a la souris ; les commandes clavier sont
+echo  affichees dans le jeu. (Echap = retour menu / quitter)
 echo ============================================================
-"%CARGO%" run --release -q -p ui -- --player 0
+"%CARGO%" run --release -q -p ui

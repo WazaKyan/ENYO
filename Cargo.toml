@@ -20,3 +20,8 @@ persist = { path = "crates/persist" }
 ai = { path = "crates/ai" }
 llm = { path = "crates/llm" }
 render = { path = "crates/render" }
+# Police bitmap 8x8 (données const pures, pur Rust) — texte dans l'UI.
+font8x8 = "0.3"
+# Accès Win32 minimal (taille de l'écran) — libs d'import précompilées GNU,
+# comme minifb : aucune compilation C requise.
+winapi = { version = "0.3", features = ["winuser"] }

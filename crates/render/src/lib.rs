@@ -140,6 +140,25 @@ pub fn viewport_png(
         .map_err(|e| e.to_string())
 }
 
+/// Sauvegarde un buffer ARGB (0x00RRGGBB) en PNG — pour capturer les écrans de
+/// l'UI (menu, jeu) en mode headless et les inspecter sans ouvrir de fenêtre.
+pub fn save_argb(buf: &[u32], w: u32, h: u32, path: &str) -> Result<(), String> {
+    let mut img = image::RgbImage::new(w, h);
+    for (i, p) in buf.iter().enumerate() {
+        let x = i as u32 % w;
+        let y = i as u32 / w;
+        if y >= h {
+            break;
+        }
+        let r = ((p >> 16) & 255) as u8;
+        let g = ((p >> 8) & 255) as u8;
+        let b = (p & 255) as u8;
+        img.put_pixel(x, y, image::Rgb([r, g, b]));
+    }
+    img.save_with_format(path, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())
+}
+
 /// Boîte englobante des cases possédées (+ marge), bornée à la carte.
 pub fn nations_bbox(world: &World, pad: u32) -> Option<(u32, u32, u32, u32)> {
     let (mut minx, mut miny, mut maxx, mut maxy) = (u32::MAX, u32::MAX, 0u32, 0u32);

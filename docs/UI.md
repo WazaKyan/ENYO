@@ -61,6 +61,32 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
   boucle Step ; cache du viewport (re-rendu si `turn` ou caméra change).
 
 ## Décisions ouvertes (humain)
-- Lancement par défaut : **regarder l'IA jouer** (spectateur auto-step) ou **jouer la nation 0** ?
 - Livrer **aussi** la voie web (tiny_http) dès le départ, ou minifb seul ?
 - Overlay debug Directeur réservé à l'agent (derrière flag) — OK ?
+
+## Réalisé (A→C + menu/GUI)
+
+- **Fenêtre ajustée à l'écran** : fenêtré ~90 % de l'écran (taille via Win32
+  `GetSystemMetrics`, dep `winapi` — libs d'import précompilées, build GNU OK) ;
+  **plein écran** sans bordure (bascule dans Paramètres → recrée la fenêtre).
+- **GUI maison** (`crates/ui/src/gui.rs`) dessinée dans le framebuffer : police
+  bitmap 8×8 (dep `font8x8`, données const pures), `Canvas` (rect/voile/texte),
+  `Button` (survol + état actif). Repli ASCII des accents. **Plus de HUD dans la
+  barre de titre.**
+- **Machine à états** : Menu (Jouer / Spectateur / Paramètres / Quitter) →
+  Paramètres (graine, nations, zoom, plein écran) → Jeu. Fond du menu = aperçu
+  du monde assombri (mis en cache par taille).
+- **Jeu** : carte plein cadre + barre haut (An/Mois, stats nation, Fin de tour,
+  Menu) + barre bas (outils Inspecter/Fonder/Essaimer, recherche E/T/F/L ou
+  vitesse Pause/×1/×2 en spectateur) + panneau d'inspection au clic + message
+  d'action (succès vert / **REJET** rouge — rien n'est silencieux côté joueur).
+  Souris **et** clavier (WASD, molette, Espace, F/E/N, 1-4, Échap).
+- **Visibilité agent** : `render::save_argb()` + `ui --headless --screen
+  menu|settings|game --shot f.png` rend exactement l'écran en PNG → chaque écran
+  est vérifiable sans ouvrir la fenêtre.
+
+### Reste (D/E)
+- Outils **militaires** (Mobiliser/Marcher) et **diplomatie** (guerre/paix) pour
+  le joueur (actuellement IA seule).
+- **Enregistrement** des commandes UI dans un `.rec.jsonl` (replay du jeu joué).
+- Équilibrage des vitesses croissance/recherche.
