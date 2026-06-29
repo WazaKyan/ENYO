@@ -30,6 +30,11 @@
   : une case ravagée rend moins. (`Command::Demolish`.) ✅ fait.
 - **Pollution lente** : une industrie n'abîme la case que **très lentement** (sur
   plusieurs décennies) — `INDUSTRY_POLLUTION` faible + résorption lente. ✅ fait.
+- **Manpower (« force ») = ressource de NATION** (`Nation.manpower`, remplace l'ancien
+  `Tile.force`) : produite par les **casernes** (et **ports**), dépensée pour
+  **recruter** des unités et les **régénérer**. Une unité sur son **territoire
+  national** récupère `UNIT_REGEN_HP`/mois en consommant du manpower (pas en terre
+  étrangère/neutre). ✅ fait.
 - **IA & genèse** : chaque nation démarre sur une case **accueillante** (capacité
   ≥ `HOSPITABLE_CAP = 1500`, pour croître au-delà de 1000 et s'étendre — pas de
   soft-lock), **tirée aléatoirement mais de façon seedée** (même graine ⇒ même

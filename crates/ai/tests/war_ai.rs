@@ -38,13 +38,13 @@ fn ai_wages_and_wins_a_war() {
     w.tiles[i].building = Some(Building::City);
     let i = idx(&w, 4, y);
     w.tiles[i].building = Some(Building::Military);
-    w.tiles[i].force = 500.0;
     let i = idx(&w, 5, y);
     w.tiles[i].building = Some(Building::Industry);
     // Ressources + tech militaire pour recruter.
     let n0 = w.nations.iter().position(|n| n.id == 0).unwrap();
     w.nations[n0].money = 5000;
     w.nations[n0].materials = 500;
+    w.nations[n0].manpower = 500;
     w.nations[n0].tech[FER] = 1;
     // Nation 1 (défenseure) : deux cases nues, loin sur la bande.
     w.apply(Command::Settle { x: 25, y, nation: 1, population: 100 });

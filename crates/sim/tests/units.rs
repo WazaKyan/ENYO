@@ -35,9 +35,9 @@ fn setup_barracks(w: &mut World, x: u32, y: u32, nation: u16) {
     });
     let i = idx(w, x, y);
     w.tiles[i].building = Some(Building::Military);
-    w.tiles[i].force = 1000.0;
     let ni = w.nations.iter().position(|n| n.id == nation).unwrap();
     w.nations[ni].money = 5000;
+    w.nations[ni].manpower = 1000;
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn create_unit_costs_money_and_force() {
     let mut w = World::new(1, 40, 30);
     setup_barracks(&mut w, 5, 5, 0);
     let money0 = w.nation(0).unwrap().money;
-    let force0 = w.tile(5, 5).force;
+    let manpower0 = w.nation(0).unwrap().manpower;
     let ev = w.apply(Command::CreateUnit {
         x: 5,
         y: 5,
@@ -56,7 +56,7 @@ fn create_unit_costs_money_and_force() {
     assert_eq!(w.units.len(), 1);
     let s = unit_stats(UnitKind::Infantry);
     assert_eq!(w.nation(0).unwrap().money, money0 - s.cost_money);
-    assert!((w.tile(5, 5).force - (force0 - s.cost_force as f32)).abs() < 0.5);
+    assert_eq!(w.nation(0).unwrap().manpower, manpower0 - s.cost_force);
     assert_eq!(w.units[0].hp, s.max_hp);
 }
 
@@ -272,6 +272,52 @@ fn unit_destroyed_at_zero_hp() {
     );
     assert!(w.units.iter().all(|u| u.id != 2), "défenseur retiré du monde");
     assert!(w.units.iter().any(|u| u.id == 1), "l'attaquant survit (pas de riposte d'un mort)");
+}
+
+#[test]
+fn unit_regenerates_on_home_territory_only() {
+    // Sur son territoire national : régénère en consommant du manpower.
+    let mut w = World::new(33, 40, 30);
+    plain(&mut w, 5, 5);
+    w.apply(Command::Settle {
+        x: 5,
+        y: 5,
+        nation: 0,
+        population: 100,
+    });
+    let ni = w.nations.iter().position(|n| n.id == 0).unwrap();
+    w.nations[ni].manpower = 100;
+    w.units.push(Unit {
+        id: 1,
+        owner: 0,
+        kind: UnitKind::Infantry,
+        x: 5,
+        y: 5,
+        hp: 50,
+        moves_left: 30,
+    });
+    let mp0 = w.nation(0).unwrap().manpower;
+    w.apply(Command::Step);
+    assert!(w.units[0].hp > 50, "régénère chez soi (50 -> {})", w.units[0].hp);
+    assert!(
+        w.nation(0).unwrap().manpower < mp0,
+        "la régénération consomme du manpower"
+    );
+
+    // Sur une case neutre (non possédée) : aucune régénération.
+    let mut w2 = World::new(34, 40, 30);
+    plain(&mut w2, 7, 7);
+    w2.units.push(Unit {
+        id: 1,
+        owner: 0,
+        kind: UnitKind::Infantry,
+        x: 7,
+        y: 7,
+        hp: 50,
+        moves_left: 30,
+    });
+    w2.apply(Command::Step);
+    assert_eq!(w2.units[0].hp, 50, "pas de régénération en terre neutre");
 }
 
 #[test]

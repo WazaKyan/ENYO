@@ -288,16 +288,16 @@ fn military_recruits_soldiers_for_upkeep() {
         building: Building::Military,
     });
     assert!(matches!(ev[0], Event::Built { .. }), "caserne bâtie");
-    let f0 = w.tile(a.0, a.1).force;
+    let f0 = w.nation(0).unwrap().manpower;
     let m0 = w.nation(0).unwrap().money;
     for _ in 0..5 {
         w.apply(Command::Step);
     }
     assert!(
-        w.tile(a.0, a.1).force > f0,
-        "la caserne recrute des soldats ({} -> {})",
+        w.nation(0).unwrap().manpower > f0,
+        "la caserne produit du manpower ({} -> {})",
         f0,
-        w.tile(a.0, a.1).force
+        w.nation(0).unwrap().manpower
     );
     assert!(
         w.nation(0).unwrap().money < m0,

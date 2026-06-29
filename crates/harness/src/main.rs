@@ -236,7 +236,6 @@ fn run_audit(world: &World) {
     let mut violations = 0u64;
     let mut owned = 0u64;
     let mut total_pop = 0.0f64;
-    let mut total_force = 0.0f64;
     let mut dev_sum = 0.0f64;
     let mut devast_sum = 0.0f64;
     let nation_ids: std::collections::HashSet<u16> = world.nations.iter().map(|n| n.id).collect();
@@ -245,7 +244,6 @@ fn run_audit(world: &World) {
             && t.population.is_finite()
             && t.development.is_finite()
             && t.devastation.is_finite()
-            && t.force.is_finite()
             && t.vegetation.is_finite()
             && t.precip_now.is_finite()
             && t.precipitation.is_finite()
@@ -254,7 +252,7 @@ fn run_audit(world: &World) {
         if !finite {
             violations += 1;
         }
-        if t.population < 0.0 || t.force < 0.0 {
+        if t.population < 0.0 {
             violations += 1;
         }
         if !(0.0..=1.0).contains(&t.development) {
@@ -275,7 +273,6 @@ fn run_audit(world: &World) {
                 violations += 1;
             }
             total_pop += t.population as f64;
-            total_force += t.force as f64;
         }
         dev_sum += t.development as f64;
         devast_sum += t.devastation as f64;
@@ -297,8 +294,8 @@ fn run_audit(world: &World) {
         world.diplomacy.wars().len()
     );
     println!(
-        "population totale: {:.0}, force totale: {:.0}",
-        total_pop, total_force
+        "population totale: {:.0}",
+        total_pop
     );
     println!(
         "développement moyen: {:.4}, dévastation moyenne: {:.4}",

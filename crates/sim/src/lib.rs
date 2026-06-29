@@ -94,6 +94,9 @@ const DEF_CAP: i32 = 85;
 const FOREST_VEG: f32 = 0.5;
 /// Seuil de relief au-delà duquel une case compte comme « accidentée » (malus).
 const ROUGH_RUG: f32 = 0.4;
+/// PV régénérés par mois pour une unité sur son **territoire national** (consomme
+/// autant de **manpower**). Pas de régénération en terre étrangère / neutre.
+const UNIT_REGEN_HP: i32 = 8;
 // --- Score de guerre & capitulation (S5/S6) ---
 /// Valeur d'une case pour le score de guerre : vide / bâtiment / ville.
 const TILE_VALUE_EMPTY: i64 = 1;
@@ -495,6 +498,29 @@ impl World {
             u.moves_left = unit::unit_stats(u.kind).moves;
         }
 
+        // Régénération (S5) : une unité sur son **territoire national** récupère des
+        // PV chaque mois en consommant du manpower (ordre des unités → déterministe).
+        for ui in 0..self.units.len() {
+            let (ux, uy, owner, kind, hp) = {
+                let u = &self.units[ui];
+                (u.x, u.y, u.owner, u.kind, u.hp)
+            };
+            let max_hp = unit::unit_stats(kind).max_hp;
+            if hp >= max_hp || self.tiles[self.index(ux, uy)].owner != Some(owner) {
+                continue;
+            }
+            let Some(ni) = self.nations.iter().position(|n| n.id == owner) else {
+                continue;
+            };
+            let heal = UNIT_REGEN_HP
+                .min(max_hp - hp)
+                .min(self.nations[ni].manpower.max(0) as i32);
+            if heal > 0 {
+                self.units[ui].hp += heal;
+                self.nations[ni].manpower -= heal as i64;
+            }
+        }
+
         // Capitulations (S5/S6) : annexion par occupation + paix imposée.
         let cap_events = self.resolve_capitulations();
 
@@ -616,6 +642,7 @@ impl World {
         let mut housing_gain = vec![0i64; self.nations.len()];
         let mut science_gain = vec![0.0f32; self.nations.len()];
         let mut food_gain = vec![0i64; self.nations.len()];
+        let mut manpower_gain = vec![0i64; self.nations.len()];
         for y in 0..height {
             for x in 0..width {
                 let idx = y as usize * width as usize + x as usize;
@@ -666,14 +693,14 @@ impl World {
                         let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
                         science_gain[ni] += SCIENCE_BASE * workforce;
                     }
-                    // Caserne : recrute des soldats (force) sur la case, depuis la
-                    // population connectée, contre un entretien mensuel ; sinon rien.
+                    // Caserne : produit du **manpower** (national) depuis la pop
+                    // connectée, contre un entretien mensuel ; sinon rien.
                     Building::Military
                         if cpop > 0.0 && self.nations[ni].money >= MILITARY_UPKEEP =>
                     {
                         self.nations[ni].money -= MILITARY_UPKEEP;
                         let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
-                        self.tiles[idx].force += SOLDIERS_BASE * workforce;
+                        manpower_gain[ni] += (SOLDIERS_BASE * workforce).round() as i64;
                     }
                     // Ferme : produit de la nourriture ∝ terrain (humidité, chaleur,
                     // sol) × main-d'œuvre connectée × (1 − dévastation).
@@ -691,6 +718,7 @@ impl World {
             self.nations[i].housing += housing_gain[i];
             self.nations[i].knowledge += science_gain[i];
             self.nations[i].food += food_gain[i];
+            self.nations[i].manpower += manpower_gain[i];
         }
 
         // --- Nourriture & famine (refonte « villes uniquement + famine ») ---
@@ -982,11 +1010,11 @@ impl World {
         if self.nations[ni].money < stats.cost_money {
             return reject("argent insuffisant");
         }
-        if self.tiles[idx].force < stats.cost_force as f32 {
-            return reject("force insuffisante (caserne)");
+        if self.nations[ni].manpower < stats.cost_force {
+            return reject("manpower insuffisant");
         }
         self.nations[ni].money -= stats.cost_money;
-        self.tiles[idx].force -= stats.cost_force as f32;
+        self.nations[ni].manpower -= stats.cost_force;
         let id = self.next_unit_id;
         self.next_unit_id += 1;
         self.units.push(Unit {
@@ -1153,7 +1181,6 @@ impl World {
             fnv_u32(&mut h, t.population.to_bits());
             fnv_u32(&mut h, t.development.to_bits());
             fnv_u32(&mut h, t.devastation.to_bits());
-            fnv_u32(&mut h, t.force.to_bits());
             fnv_u32(&mut h, t.owner.map(|o| o as u32 + 1).unwrap_or(0));
             fnv_u32(&mut h, t.occupier.map(|o| o as u32 + 1).unwrap_or(0));
             h ^= match t.kind {
@@ -1189,6 +1216,8 @@ impl World {
             h ^= n.housing as u64;
             h = h.wrapping_mul(FNV_PRIME);
             h ^= n.food as u64;
+            h = h.wrapping_mul(FNV_PRIME);
+            h ^= n.manpower as u64;
             h = h.wrapping_mul(FNV_PRIME);
         }
         // Unités (S5) : ordre de `units` (création), stable et rejouable.

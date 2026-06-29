@@ -43,6 +43,10 @@ pub struct Nation {
     /// Nourriture : produite par les fermes ; **toute la population en consomme**
     /// chaque mois (au-delà d'un seuil de subsistance par case) — pénurie = famine.
     pub food: i64,
+    /// Manpower (« force ») : stock national produit par les **casernes** et les
+    /// **ports** ; dépensé pour **recruter** des unités et les **régénérer** sur le
+    /// territoire national.
+    pub manpower: i64,
 }
 
 impl Nation {
@@ -56,6 +60,7 @@ impl Nation {
             influence: STARTING_INFLUENCE,
             housing: STARTING_HOUSING,
             food: 0,
+            manpower: 0,
         }
     }
 }

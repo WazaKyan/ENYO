@@ -325,16 +325,15 @@ fn military(world: &World, nation: u16) -> Vec<Command> {
                 UnitKind::Infantry
             };
             let s = unit_stats(kind);
-            for (idx, t) in world.tiles.iter().enumerate() {
-                if t.owner == Some(nation)
-                    && t.building == Some(Building::Military)
-                    && t.force >= s.cost_force as f32
-                    && n.money >= s.cost_money
-                {
-                    let (x, y) = coords(idx, width);
-                    if !world.units.iter().any(|u| u.x == x && u.y == y) {
-                        cmds.push(Command::CreateUnit { x, y, nation, kind });
-                        break;
+            // Manpower (national) suffisant pour ce type ?
+            if n.manpower >= s.cost_force && n.money >= s.cost_money {
+                for (idx, t) in world.tiles.iter().enumerate() {
+                    if t.owner == Some(nation) && t.building == Some(Building::Military) {
+                        let (x, y) = coords(idx, width);
+                        if !world.units.iter().any(|u| u.x == x && u.y == y) {
+                            cmds.push(Command::CreateUnit { x, y, nation, kind });
+                            break;
+                        }
                     }
                 }
             }

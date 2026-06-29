@@ -1583,6 +1583,7 @@ impl App {
                     ("hab", n.housing),
                     ("infl", n.influence),
                     ("sci", n.knowledge as i64),
+                    ("force", n.manpower),
                 ]
             }) {
                 let mut rx = 14 + gui::text_w(&self.stats, 2) + 18;
@@ -1695,7 +1696,6 @@ impl App {
                     format!("population   : {:.0}", t.population),
                     format!("developpement: {:.2}", t.development),
                     format!("capacite     : {:.0}", world.capacity_at(tx, ty)),
-                    format!("force        : {:.0}", t.force),
                     format!("devastation  : {:.2}", t.devastation),
                 ];
                 let pw = 360;
@@ -1855,6 +1855,7 @@ fn resource_tooltip(key: &str) -> &'static str {
         "hab" => "Habitation : produite par le commerce ; fonder des villes.",
         "infl" => "Influence : +1/mois ; etendre le territoire.",
         "sci" => "Science : produite par l'education ; payer la recherche.",
+        "force" => "Force (manpower) : casernes/ports ; recruter et regenerer les unites.",
         _ => "",
     }
 }

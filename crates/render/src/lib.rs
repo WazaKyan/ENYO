@@ -240,10 +240,6 @@ pub fn region(world: &World, x0: u32, y0: u32, w: u32, h: u32, px: u32) -> RgbIm
                     draw_marker(&mut img, bx, by, px, [245, 232, 150]);
                 }
             }
-            if t.force > 150.0 {
-                let s = (px / 3).max(1);
-                fill_block(&mut img, bx, by, s, s, [220, 40, 40]);
-            }
         }
     }
 
@@ -708,7 +704,6 @@ fn sample(kind: TileKind, biome: Biome, elevation: f32) -> Tile {
         population: 0.0,
         development: 0.0,
         devastation: 0.0,
-        force: 0.0,
         building: None,
     }
 }
