@@ -59,7 +59,12 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 > imposée**. Le seuil étant relatif au total, **un grand empire est plus dur à faire
 > plier** (une case parmi 200 pèse peu). La paix négociée (sans victoire) **n'annexe
 > rien** (les occupations retombent). Le propriétaire **reprend** une case occupée en
-> y ramenant une unité.
+> y ramenant une unité. **L'IA** sait faire tout cela : elle bâtit une caserne,
+> **déclare la guerre** (grief élevé ou conquête proactive du voisin le plus proche),
+> **recrute** des unités, les **marche** vers l'ennemi (plus court chemin, enroulement
+> X), **attaque** et **occupe** pour le faire capituler. (Limite connue : une unité
+> terrestre ne franchit l'océan que selon sa tech navale, lentement — les invasions
+> maritimes lointaines restent ardues.)
 
 ---
 
