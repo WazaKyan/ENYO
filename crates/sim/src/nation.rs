@@ -36,7 +36,8 @@ pub struct Nation {
     pub money: i64,
     /// Matériaux : produits par l'industrie, consommés par le commerce / la construction.
     pub materials: i64,
-    /// Influence : +1/mois de base ; étendre le territoire.
+    /// Influence : flux mensuel **∝ territoire + population** (plancher de base) ;
+    /// dépensée pour **étendre** le territoire (boucle vertueuse grande nation).
     pub influence: i64,
     /// Habitation : produite par le commerce ; **coût pour fonder une ville**.
     pub housing: i64,

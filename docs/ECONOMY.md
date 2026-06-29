@@ -1,5 +1,18 @@
 # ENYO — Économie interne (S8) : plan
 
+## RÉVISION (29/06) — influence ∝ taille + IA stratège
+
+- **Influence = flux ∝ territoire + population** (et non plus `+1/mois` forfaitaire) :
+  `INFLUENCE_BASE(1) + cases × INFLUENCE_PER_TILE(1) + pop_totale / INFLUENCE_POP_DIVISOR(2000)`.
+  Plus une nation est grande et peuplée, plus elle rayonne — et plus elle peut
+  s'étendre (l'expansion coûte de l'influence). Boucle vertueuse voulue. ✅ fait.
+- **IA — développement économique plus intelligent & immersif** : priorités
+  adaptatives + meilleure case (cf. la puce « IA — développement économique
+  stratégique » plus bas), **éducation** (science→tech) et **infrastructure** (qu'elle
+  ne bâtissait jamais), **Fer** recherché une fois militarisée (Archers→Cavalerie),
+  et **militarisation sensible au contexte** (caserne seulement face à un rival
+  proche / en guerre, sinon priorité au développement). ✅ fait.
+
 ## RÉVISION (clarification du 28/06) — territoire ≠ villes
 
 - **Territoire** = les cases possédées : la **zone** où l'on bâtit et où s'accumule
@@ -39,9 +52,20 @@
   ≥ `HOSPITABLE_CAP = 1500`, pour croître au-delà de 1000 et s'étendre — pas de
   soft-lock), **tirée aléatoirement mais de façon seedée** (même graine ⇒ même
   placement ⇒ rejeu identique). `spawn_nations` y **fonde une ville** (départ avec
-  `STARTING_HOUSING = 60`) ; l'IA bâtit ensuite une chaîne minimale **industrie →
-  ferme → commerce → ville** (un bâtiment/tour, selon ses ressources). ✅ **fait
-  (tranche B)**.
+  `STARTING_HOUSING = 60`).
+- **IA — développement économique stratégique** (un bâtiment/tour, déterministe) :
+  au lieu d'une chaîne figée, l'IA choisit le **bâtiment le plus utile** et la
+  **meilleure case** selon sa situation. Souhaits ordonnés : amorcer chaque maillon
+  (ville → industrie → ferme → **caserne si menacée** → commerce → **éducation**),
+  puis **équilibrer au prorata des villes** (fermes pour nourrir, commerce, industrie,
+  éducation pour la science→tech), **connecter** un territoire étalé (**infrastructure**),
+  sinon **grandir** (ville). On bâtit le **premier souhait abordable** (pas de blocage).
+  Placement : villes/fermes sur la **terre la plus fertile** (capacité max), le reste
+  sur la moins fertile (on préserve la bonne terre). **Militarisation sensible au
+  contexte** : caserne + recherche **Fer** (Archers→Cavalerie) **seulement** face à un
+  rival proche (`MILITARIZE_RANGE`) ou en guerre ; isolée, l'IA développe son économie.
+  Recherche : économie/expansion (Terroir, Essor, Lien) en continu, **Fer** si elle a
+  une caserne. ✅ **fait**.
 
 > Le reste du document décrit la conception initiale ; en cas de divergence, la
 > section RÉVISION ci-dessus prime.
@@ -68,7 +92,7 @@ dépend des **stats de la case** et de la **population connectée**, et l'indust
 |---|---|---|---|
 | **argent** | commerce, (impôt de base léger) | construire, entretien mensuel (militaire, éducation, infra) | départ ~500 |
 | **matériaux** | industrie | construire, commerce | 0 |
-| **influence** | +1/mois/nation (tech ↑) | étendre le territoire (essaimer), agrandir les villes | 0 |
+| **influence** | flux/mois **∝ territoire + population** (plancher de base) | étendre le territoire (essaimer), agrandir les villes | 0 |
 | **science** | éducation (+ base densité héritée) | recherche tech | = `knowledge` actuel (réutilisé) |
 | **habitation** | commerce | loger/croître la population, fonder/essaimer | 0 |
 
@@ -113,7 +137,11 @@ union-find sur les cases possédées d'une nation :
 
 ## 5. Résolution mensuelle (dans `resolve_turn`, ordre canonique, entiers)
 
-Par nation, après la dynamique S1 : `influence += INFLUENCE_BASE`. Puis pour chaque
+Par nation, après la dynamique S1 :
+`influence += INFLUENCE_BASE + cases × INFLUENCE_PER_TILE + pop_totale / INFLUENCE_POP_DIVISOR`
+(territoire + population pèsent → boucle vertueuse : grande nation peuplée = plus
+d'influence = plus d'expansion ; somme pop en ordre d'index, quotient entier → rejeu
+exact). Puis pour chaque
 case bâtie (somme de contributions **arrondies par case** → `i64`, ordre d'index) :
 - **Industrie** : `matériaux += round(BASE_IND × terrain(case) × workforce × (1−dev))` ;
   `devastation += POLLUTION` (borné). `terrain` dérive de `soil_fertility`,

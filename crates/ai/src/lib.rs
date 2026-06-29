@@ -19,19 +19,34 @@ use sim::World;
 mod director;
 pub use director::{Director, Intent, Stance};
 
-/// Branches que l'IA fait progresser (Fer = militaire, géré via la mobilisation).
-const AI_BRANCHES: [usize; 3] = [TERROIR, ESSOR, LIEN];
+/// Branches **économie / expansion** que l'IA fait toujours progresser : capacité
+/// de charge (Terroir), portée d'essaimage (Essor), liens navals (Lien). Le
+/// **militaire (Fer)** s'ajoute dès qu'elle a une caserne — cf. [`plan`] — pour
+/// fielder Archers puis Cavalerie au lieu de rester à l'Infanterie.
+const AI_ECON_BRANCHES: [usize; 3] = [TERROIR, ESSOR, LIEN];
 
 /// Seuil de grief au-delà duquel l'IA déclare la guerre.
 const WAR_THRESHOLD: f32 = 3.0;
+
+/// Distance (Manhattan, ancre) en deçà de laquelle un rival est une **menace** :
+/// l'IA se **militarise** alors (caserne → Fer → unités). Loin de tout rival, elle
+/// se concentre sur le **développement économique** (meilleure croissance, pas de
+/// guns-vs-butter inutile) — stratégie sensible au contexte.
+const MILITARIZE_RANGE: u32 = 35;
 
 /// Plan d'un tour pour une nation IA : recherche + expansion + diplomatie/guerre.
 pub fn plan(world: &World, nation: u16) -> Vec<Command> {
     let mut cmds = Vec::new();
 
-    // Recherche : la branche suivie au plus bas palier, si le savoir suffit.
+    // Recherche : économie + expansion en continu ; militaire (Fer) une fois la
+    // nation militarisée (caserne). On pousse la branche au plus bas palier
+    // d'abord (round-robin équilibré), si le savoir suffit.
     if let Some(n) = world.nation(nation) {
-        let (branch, tier) = AI_BRANCHES
+        let mut branches: Vec<usize> = AI_ECON_BRANCHES.to_vec();
+        if has_barracks(world, nation) {
+            branches.push(FER);
+        }
+        let (branch, tier) = branches
             .iter()
             .map(|&b| (b, n.tech[b]))
             .min_by_key(|&(b, t)| (t, b))
@@ -119,58 +134,107 @@ fn expansion(world: &World, nation: u16) -> Vec<Command> {
     cmds
 }
 
-/// Économie IA (minimale, déterministe) : bâtit AU PLUS UN bâtiment/tour sur la
-/// première case possédée et vide (ordre d'index), selon une priorité qui amorce
-/// la chaîne ville → population : **industrie** (matériaux) → **ferme** (nourriture,
-/// pour étendre les villes au-delà de la subsistance) → **commerce** (habitation)
-/// → **ville** (nouveau foyer). Respecte les coûts (argent / matériaux / habitation).
+/// Économie IA (déterministe) : choisit, parmi les cases libres possédées, **le
+/// bâtiment le plus utile au développement** et **la meilleure case** où le poser
+/// (un bâtiment/tour). La stratégie encode une vraie logique économique : un
+/// moteur de population (**villes**) nourri (**fermes**), alimenté en
+/// matériaux→argent/habitation (**industrie**→**commerce**), qui progresse en
+/// science (**éducation** → tech), se défend (**caserne**) et **connecte** un
+/// territoire étalé (**infra**, sinon les bâtiments isolés chôment). On bâtit le
+/// PREMIER souhait ABORDABLE (jamais de blocage si le plus prioritaire est trop
+/// cher). Respecte les coûts (argent / matériaux / habitation).
 fn economy(world: &World, nation: u16) -> Vec<Command> {
     let Some(n) = world.nation(nation) else {
         return Vec::new();
     };
-    let mut industries = 0;
-    let mut farms = 0;
-    let mut commerces = 0;
-    let mut militaries = 0;
-    let mut empty: Option<usize> = None;
+    let (mut cities, mut industries, mut farms) = (0i64, 0i64, 0i64);
+    let (mut commerces, mut educations, mut infras, mut militaries) = (0i64, 0i64, 0i64, 0i64);
+    let mut empty: Vec<usize> = Vec::new();
     for (idx, t) in world.tiles.iter().enumerate() {
         if t.owner != Some(nation) {
             continue;
         }
         match t.building {
+            Some(Building::City) => cities += 1,
             Some(Building::Industry) => industries += 1,
             Some(Building::Farm) => farms += 1,
             Some(Building::Commerce) => commerces += 1,
+            Some(Building::Education) => educations += 1,
+            Some(Building::Infrastructure) => infras += 1,
             Some(Building::Military) => militaries += 1,
-            None if t.kind == TileKind::Land && empty.is_none() => empty = Some(idx),
+            Some(Building::Port) => {}
+            None if t.kind == TileKind::Land => empty.push(idx),
             _ => {}
         }
     }
-    let Some(idx) = empty else {
-        return Vec::new(); // pas de case libre où bâtir
-    };
+    if empty.is_empty() {
+        return Vec::new(); // pas de case terre libre où bâtir
+    }
+    let tiles_owned = world.nation_stats(nation).1 as i64;
+    let at_war = at_war_with_anyone(world, nation);
+    // Se militariser SEULEMENT face à une menace : en guerre, ou un rival proche.
+    // Isolée, l'IA reste pacifique et développe son économie (meilleure croissance).
+    let militarize = at_war
+        || nearest_rival_distance(world, nation).is_some_and(|d| d <= MILITARIZE_RANGE);
+
+    // Liste de souhaits ORDONNÉE par priorité de développement ; on bâtira le
+    // premier réellement abordable.
+    let mut wish: Vec<Building> = Vec::new();
+    // 1) Amorce de la chaîne : un exemplaire de chaque maillon essentiel.
+    if cities == 0 {
+        wish.push(Building::City);
+    }
+    if industries == 0 {
+        wish.push(Building::Industry);
+    }
+    if farms == 0 {
+        wish.push(Building::Farm);
+    }
+    if militaries == 0 && militarize {
+        // Caserne face à une menace, et **tôt** (tant que les matériaux sont frais
+        // — c'est le bâtiment le plus gourmand) : défense, et surtout débloque la
+        // recherche **Fer** + le **recrutement** d'unités. Sinon le commerce épuise
+        // les matériaux et la nation resterait désarmée au mauvais moment.
+        wish.push(Building::Military);
+    }
+    if commerces == 0 {
+        wish.push(Building::Commerce);
+    }
+    if educations == 0 {
+        // Science → tech. Exige un commerce connecté pour produire (donc après).
+        wish.push(Building::Education);
+    }
+    // 2) Équilibrage proportionnel au nombre de villes (le moteur de pop).
+    if farms < cities {
+        wish.push(Building::Farm); // nourrir chaque ville dense
+    }
+    if commerces < cities {
+        wish.push(Building::Commerce); // argent + habitation
+    }
+    if industries < cities {
+        wish.push(Building::Industry); // matériaux
+    }
+    if educations * 2 < cities {
+        wish.push(Building::Education); // plus de science
+    }
+    if at_war && militaries < cities {
+        wish.push(Building::Military);
+    }
+    // 3) Connecter un territoire étalé.
+    if infras * 6 < tiles_owned {
+        wish.push(Building::Infrastructure);
+    }
+    // 4) Sinon : grandir — une ville de plus = plus de population = plus de tout.
+    wish.push(Building::City);
+
     let affordable = |b: Building| {
         let (m, mat, h) = sim::build_cost(b);
         n.money >= m && n.materials >= mat && n.housing >= h
     };
-    // Chaîne : industrie (matériaux) → ferme (nourrir) → caserne (force/unités) →
-    // commerce (habitation) → fermes en plus → villes (population). La caserne
-    // arrive tôt pour que l'IA puisse faire la guerre.
-    let pick = if industries == 0 && affordable(Building::Industry) {
-        Building::Industry
-    } else if farms == 0 && affordable(Building::Farm) {
-        Building::Farm
-    } else if militaries == 0 && affordable(Building::Military) {
-        Building::Military
-    } else if commerces == 0 && affordable(Building::Commerce) {
-        Building::Commerce
-    } else if farms < industries + 1 && affordable(Building::Farm) {
-        Building::Farm
-    } else if affordable(Building::City) {
-        Building::City
-    } else {
+    let Some(pick) = wish.into_iter().find(|&b| affordable(b)) else {
         return Vec::new();
     };
+    let idx = best_build_tile(world, &empty, pick);
     let (x, y) = coords(idx, world.width);
     vec![Command::Build {
         x,
@@ -178,6 +242,27 @@ fn economy(world: &World, nation: u16) -> Vec<Command> {
         nation,
         building: pick,
     }]
+}
+
+/// Meilleure case libre pour un bâtiment : **villes & fermes** sur la **terre la
+/// plus fertile** (capacité de charge max → plus de population / de nourriture) ;
+/// les autres bâtiments sur la **moins fertile** (on préserve la bonne terre pour
+/// ce qui en profite). Égalités tranchées par index croissant → déterministe.
+fn best_build_tile(world: &World, empty: &[usize], b: Building) -> usize {
+    let prefer_high = matches!(b, Building::City | Building::Farm);
+    let width = world.width;
+    let mut best = empty[0];
+    let (bx, by) = coords(best, width);
+    let mut best_cap = world.capacity_at(bx, by);
+    for &idx in &empty[1..] {
+        let (x, y) = coords(idx, width);
+        let cap = world.capacity_at(x, y);
+        if (prefer_high && cap > best_cap) || (!prefer_high && cap < best_cap) {
+            best_cap = cap;
+            best = idx;
+        }
+    }
+    best
 }
 
 /// Distance de Manhattan (X enroulé) entre deux cases.
@@ -212,6 +297,19 @@ fn nation_anchor(world: &World, nation: u16) -> Option<(u32, u32)> {
         .iter()
         .position(|t| t.owner == Some(nation))
         .map(|idx| coords(idx, world.width))
+}
+
+/// Distance (Manhattan, ancre) au rival le plus proche — sert à décider de se
+/// militariser ou non (menace de proximité).
+fn nearest_rival_distance(world: &World, nation: u16) -> Option<u32> {
+    let me = nation_anchor(world, nation)?;
+    world
+        .nations
+        .iter()
+        .filter(|o| o.id != nation)
+        .filter_map(|o| nation_anchor(world, o.id))
+        .map(|p| manhattan(me.0, me.1, p.0, p.1, world.width))
+        .min()
 }
 
 /// Nation rivale la plus proche (par distance d'ancre) — cible de conquête.

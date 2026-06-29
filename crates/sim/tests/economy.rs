@@ -136,23 +136,24 @@ fn commerce_makes_money_and_housing_from_materials() {
 }
 
 #[test]
-fn influence_accrues_each_month() {
+fn influence_scales_with_territory_and_population() {
     let mut w = World::new(7, 80, 60);
-    let (x, y) = productive(&w);
-    w.apply(Command::Settle {
-        x,
-        y,
-        nation: 0,
-        population: 800,
-    });
+    let [a, b, c] = three_land_in_row(&w);
+    for (p, pop) in [(a, 1500u32), (b, 1500), (c, 1000)] {
+        w.apply(Command::Settle {
+            x: p.0,
+            y: p.1,
+            nation: 0,
+            population: pop,
+        });
+    }
+    // Influence de départ inchangée tant qu'aucun mois ne s'est écoulé.
     assert_eq!(w.nation(0).unwrap().influence, STARTING_INFLUENCE);
+    // 3 cases possédées, 4000 hab au total (aucune famine : ≤ subsistance/case).
     w.apply(Command::Step);
-    w.apply(Command::Step);
-    assert_eq!(
-        w.nation(0).unwrap().influence,
-        STARTING_INFLUENCE + 2,
-        "influence +1/mois"
-    );
+    let gain = w.nation(0).unwrap().influence - STARTING_INFLUENCE;
+    // base(1) + territoire(3 cases × 1) + population(4000 / 2000 = 2) = 6/mois.
+    assert_eq!(gain, 1 + 3 + 2, "influence ∝ territoire + population");
 }
 
 #[test]

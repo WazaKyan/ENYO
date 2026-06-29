@@ -36,8 +36,14 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 const KNOWLEDGE_RATE: f32 = 1.0;
 
 // --- Calibrage économie interne S8 (single-source) ---
-/// Influence gagnée par nation et par mois (de base).
+/// Influence : **plancher** de base gagné chaque mois par une nation vivante.
 const INFLUENCE_BASE: i64 = 1;
+/// Influence/mois par **case possédée** : le **territoire** pèse (rayonnement).
+const INFLUENCE_PER_TILE: i64 = 1;
+/// Habitants nécessaires pour **+1 influence/mois** : la **population** pèse.
+/// Plus une nation est peuplée et étendue, plus elle rayonne — et plus elle peut
+/// s'étendre (l'expansion coûte de l'influence). Boucle vertueuse voulue.
+const INFLUENCE_POP_DIVISOR: f32 = 2000.0;
 /// Coût en influence d'une **expansion** (S2/E5) : étendre son territoire. Public :
 /// l'IA s'en sert pour ne pas s'étendre sans influence.
 pub const SWARM_INFLUENCE: i64 = 10;
@@ -572,6 +578,10 @@ impl World {
         // Nations encore vivantes (≥ 1 case possédée) : seules elles gagnent de
         // l'influence (sinon une nation conquise continuerait d'en accumuler).
         let mut owned = vec![false; self.nations.len()];
+        // Agrégats par nation pour l'influence : population totale + nb de cases.
+        // Sommés en ordre d'index (canonique) → flux d'influence rejouable au bit.
+        let mut pop_sum = vec![0.0f32; self.nations.len()];
+        let mut tile_count = vec![0i64; self.nations.len()];
         // BTreeSet (et non HashSet) : ordre d'itération déterministe → griefs
         // appliqués dans un ordre stable → checksum reproductible.
         let mut borders: BTreeSet<(u16, u16)> = BTreeSet::new();
@@ -625,6 +635,8 @@ impl World {
 
                 if let Some(i) = ni {
                     owned[i] = true;
+                    pop_sum[i] += newpop;
+                    tile_count[i] += 1;
                     knowledge_gain[i] += dev * (newpop / 1000.0).min(1.0) * KNOWLEDGE_RATE;
                 }
             }
@@ -638,9 +650,13 @@ impl World {
         }
 
         // --- Économie interne S8 ---
+        // Influence (E5+) : flux ∝ **territoire** ET **population** — plus une
+        // nation est grande et peuplée, plus elle rayonne (et plus elle peut
+        // s'étendre). Entier, sommé en ordre d'index → rejeu exact.
         for (i, n) in self.nations.iter_mut().enumerate() {
             if owned[i] {
-                n.influence += INFLUENCE_BASE;
+                let from_pop = (pop_sum[i] / INFLUENCE_POP_DIVISOR) as i64;
+                n.influence += INFLUENCE_BASE + tile_count[i] * INFLUENCE_PER_TILE + from_pop;
             }
         }
         // Réseaux d'infrastructure (E2) : main-d'œuvre mise en commun par les routes.
