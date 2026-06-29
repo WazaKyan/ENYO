@@ -164,7 +164,11 @@ impl Button {
         let border = if active || hover { ACCENT_HI } else { BORDER };
         c.fill_rect(self.x, self.y, self.w, self.h, bg);
         c.rect_outline(self.x, self.y, self.w, self.h, border);
-        let scale = ((self.h - 8) / 8).clamp(1, 3);
+        // Plus grande échelle qui rentre EN LARGEUR ET EN HAUTEUR (anti-débordement).
+        let mut scale = 3;
+        while scale > 1 && (text_w(&self.label, scale) > self.w - 8 || 8 * scale > self.h - 6) {
+            scale -= 1;
+        }
         let tw = text_w(&self.label, scale);
         c.text(
             self.x + (self.w - tw) / 2,

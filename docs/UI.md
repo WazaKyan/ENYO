@@ -84,6 +84,16 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
 - **Visibilité agent** : `render::save_argb()` + `ui --headless --screen
   menu|settings|game --shot f.png` rend exactement l'écran en PNG → chaque écran
   est vérifiable sans ouvrir la fenêtre.
+- **Audit « en vrai »** (`ui --audit --out DIR [--fullscreen]`, `run-audit.bat`) :
+  entrées **abstraites** (`Input`) → la fenêtre **et** l'audit appellent les mêmes
+  `handle()`/`draw()`. L'audit joue une séquence scriptée (menu → paramètres →
+  partie → fonder/recherche/inspecter → spectateur sur N tours) et sauve un PNG
+  par étape, **à la résolution plein écran réelle** → on vérifie l'UI et le jeu
+  en conditions réelles, sans fenêtre bloquante. (Étape suivante : rejouer un
+  `.rec.jsonl` enregistré au lieu d'un script en dur.)
+- **Plein écran** = dimensionné sur la **zone de travail** Win32 (`SPI_GETWORKAREA`)
+  + `set_position`, pour que la barre du bas ne passe jamais sous la barre des
+  tâches.
 
 ### Reste (D/E)
 - Outils **militaires** (Mobiliser/Marcher) et **diplomatie** (guerre/paix) pour

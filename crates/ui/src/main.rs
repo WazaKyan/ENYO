@@ -36,7 +36,7 @@ enum Screen {
 }
 
 /// Boutons du menu principal.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum MenuBtn {
     Play,
     Spectate,
@@ -45,7 +45,7 @@ enum MenuBtn {
 }
 
 /// Boutons de l'écran paramètres.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum SetBtn {
     SeedDn,
     SeedUp,
@@ -58,13 +58,92 @@ enum SetBtn {
 }
 
 /// Boutons de l'écran de jeu.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum GameBtn {
     Menu,
     EndTurn,
     Tool(Tool),
     Research(u8),
     Speed(u32),
+}
+
+/// Entrées d'une frame — abstraites pour piloter l'app aussi bien en réel
+/// (fenêtre) qu'en audit (séquence scriptée, sans fenêtre).
+#[derive(Default, Clone)]
+struct Input {
+    pressed: Vec<Key>,
+    down: Vec<Key>,
+    mx: i32,
+    my: i32,
+    click: bool,
+    scroll: f32,
+}
+
+impl Input {
+    fn click_at(mx: i32, my: i32) -> Self {
+        Input {
+            mx,
+            my,
+            click: true,
+            ..Default::default()
+        }
+    }
+    fn key(k: Key) -> Self {
+        Input {
+            pressed: vec![k],
+            down: vec![k],
+            mx: -1,
+            my: -1,
+            ..Default::default()
+        }
+    }
+    fn key_pressed(&self, k: Key) -> bool {
+        self.pressed.contains(&k)
+    }
+    fn key_down(&self, k: Key) -> bool {
+        self.down.contains(&k)
+    }
+}
+
+/// Touches surveillées chaque frame (pour bâtir l'Input depuis la fenêtre).
+const WATCH: [Key; 18] = [
+    Key::A,
+    Key::D,
+    Key::W,
+    Key::S,
+    Key::Left,
+    Key::Right,
+    Key::Up,
+    Key::Down,
+    Key::Escape,
+    Key::F,
+    Key::E,
+    Key::N,
+    Key::Space,
+    Key::Key0,
+    Key::Key1,
+    Key::Key2,
+    Key::Key3,
+    Key::Key4,
+];
+
+fn gather_input(window: &Window, mx: i32, my: i32, click: bool, scroll: f32) -> Input {
+    let mut inp = Input {
+        mx,
+        my,
+        click,
+        scroll,
+        ..Default::default()
+    };
+    for k in WATCH {
+        if window.is_key_pressed(k, KeyRepeat::No) {
+            inp.pressed.push(k);
+        }
+        if window.is_key_down(k) {
+            inp.down.push(k);
+        }
+    }
+    inp
 }
 
 /// Réglages modifiables (menu / paramètres).
@@ -110,6 +189,10 @@ struct App {
 
 fn main() {
     let args = Args::parse();
+    if args.audit {
+        run_audit(&args);
+        return;
+    }
     if args.headless {
         run_headless(&args);
         return;
@@ -118,14 +201,25 @@ fn main() {
     let mut mouse_was_down = false;
 
     loop {
-        let (iw, ih) = app.initial_size();
+        let fs = app.config.fullscreen;
+        // Plein écran : zone de travail (écran moins la barre des tâches) pour
+        // que rien ne soit caché ; sinon fenêtre ~90 %.
+        let (ox, oy, iw, ih) = if fs {
+            work_area()
+        } else {
+            (0, 0, app.config.win_w as i32, app.config.win_h as i32)
+        };
         let opts = WindowOptions {
-            resize: !app.config.fullscreen,
-            borderless: app.config.fullscreen,
-            title: !app.config.fullscreen,
+            resize: !fs,
+            borderless: fs,
+            title: !fs,
             ..WindowOptions::default()
         };
-        let mut window = Window::new("ENYO", iw, ih, opts).expect("ouverture de la fenêtre");
+        let mut window =
+            Window::new("ENYO", iw as usize, ih as usize, opts).expect("ouverture de la fenêtre");
+        if fs {
+            window.set_position(ox as isize, oy as isize);
+        }
         window.set_target_fps(60);
         app.recreate = false;
 
@@ -141,23 +235,11 @@ fn main() {
             let scroll = window.get_scroll_wheel().map(|(_, y)| y).unwrap_or(0.0);
             let (wi, hi) = (w as i32, h as i32);
 
-            match app.screen {
-                Screen::Menu => {
-                    app.handle_menu(&window, wi, hi, mx, my, click);
-                    app.draw_menu(wi, hi, mx, my);
-                }
-                Screen::Settings => {
-                    app.handle_settings(&window, wi, hi, mx, my, click);
-                    app.draw_settings(wi, hi, mx, my);
-                }
-                Screen::Game => {
-                    app.handle_game(&window, wi, hi, mx, my, click, scroll);
-                    app.draw_game(wi, hi, mx, my);
-                }
-            }
-            window
-                .update_with_buffer(&app.buf, w, h)
-                .expect("affichage");
+            let input = gather_input(&window, mx, my, click, scroll);
+            app.handle(&input, wi, hi);
+            app.draw(wi, hi, mx, my);
+
+            window.update_with_buffer(&app.buf, w, h).expect("affichage");
         }
         if app.quit || !app.recreate {
             break;
@@ -199,6 +281,111 @@ fn run_headless(args: &Args) {
     }
 }
 
+/// Petit pilote d'audit : applique des entrées et sauve un PNG par étape.
+struct Auditor {
+    dir: String,
+    w: i32,
+    h: i32,
+    n: usize,
+    shots: Vec<String>,
+}
+
+impl Auditor {
+    fn snap(&mut self, app: &mut App, label: &str) {
+        app.draw(self.w, self.h, -1, -1);
+        let path = format!("{}/{:02}_{}.png", self.dir, self.n, label);
+        match render::save_argb(&app.buf, self.w as u32, self.h as u32, &path) {
+            Ok(()) => self.shots.push(path),
+            Err(e) => eprintln!("échec capture {path}: {e}"),
+        }
+        self.n += 1;
+    }
+    fn step(&mut self, app: &mut App, input: &Input, label: &str) {
+        app.handle(input, self.w, self.h);
+        self.snap(app, label);
+    }
+}
+
+/// Centre d'un bouton identifié dans une liste (sinon (-1,-1)).
+fn center_of<T: PartialEq>(list: &[(T, Button)], want: T) -> (i32, i32) {
+    list.iter()
+        .find(|(id, _)| *id == want)
+        .map(|(_, b)| (b.x + b.w / 2, b.y + b.h / 2))
+        .unwrap_or((-1, -1))
+}
+
+/// Audit « en vrai » : pilote la véritable app (mêmes `handle`/`draw` que la
+/// fenêtre) via une séquence d'entrées scriptées et sauve un PNG par étape.
+/// Vérifie l'interface ET le jeu en conditions réelles, sans fenêtre bloquante.
+fn run_audit(args: &Args) {
+    let dir = args.out.clone().unwrap_or_else(|| "out/audit".to_string());
+    std::fs::create_dir_all(&dir).ok();
+    let (w, h) = if args.fullscreen {
+        let wa = work_area();
+        (wa.2.max(640), wa.3.max(480))
+    } else {
+        (1280, 800)
+    };
+    let mut app = App::new(args);
+    app.buf = vec![gui::BG; (w * h) as usize];
+    let mut a = Auditor {
+        dir,
+        w,
+        h,
+        n: 0,
+        shots: Vec::new(),
+    };
+    let map_pt = (w / 2, (TOP_H + (h - BOT_H)) / 2);
+
+    // --- Menu -> Paramètres -> retour ---
+    app.screen = Screen::Menu;
+    a.snap(&mut app, "menu");
+    let p = center_of(&app.menu_buttons(w, h), MenuBtn::Settings);
+    a.step(&mut app, &Input::click_at(p.0, p.1), "param_ouvert");
+    let p = center_of(&app.settings_buttons(w, h), SetBtn::NationsUp);
+    a.step(&mut app, &Input::click_at(p.0, p.1), "param_nations_plus");
+    let p = center_of(&app.settings_buttons(w, h), SetBtn::Back);
+    a.step(&mut app, &Input::click_at(p.0, p.1), "retour_menu");
+
+    // --- Jouer (nation 0) ---
+    let p = center_of(&app.menu_buttons(w, h), MenuBtn::Play);
+    a.step(&mut app, &Input::click_at(p.0, p.1), "jeu_debut");
+
+    // Quelques fins de tour (le monde évolue).
+    for i in 0..3 {
+        a.step(&mut app, &Input::key(Key::Space), &format!("jeu_tour{}", i + 1));
+    }
+
+    // Outil Fonder + clic sur la carte.
+    let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::Found));
+    a.step(&mut app, &Input::click_at(p.0, p.1), "outil_fonder");
+    a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "fonder_case");
+
+    // Recherche (montre le succès OU le rejet « savoir insuffisant »).
+    let p = center_of(&app.game_buttons(w, h), GameBtn::Research(0));
+    a.step(&mut app, &Input::click_at(p.0, p.1), "recherche_essor");
+
+    // Inspecter une case (panneau).
+    let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::None));
+    a.step(&mut app, &Input::click_at(p.0, p.1), "outil_inspecter");
+    a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "inspecter_case");
+
+    // --- Spectateur : évolution du monde sur plusieurs tours ---
+    app.start_game(true);
+    a.snap(&mut app, "spectateur_t0");
+    for stop in [15usize, 30, 60] {
+        while app.world.as_ref().map(|w| w.turn).unwrap_or(0) < stop as u64 {
+            app.end_turn();
+        }
+        a.snap(&mut app, &format!("spectateur_t{stop}"));
+    }
+
+    println!("audit : {} captures dans {}/", a.shots.len(), a.dir);
+    for s in &a.shots {
+        println!("  {s}");
+    }
+}
+
 impl App {
     fn new(args: &Args) -> Self {
         let (sw, sh) = screen_size();
@@ -233,14 +420,6 @@ impl App {
             last_msg: String::new(),
             stats: String::new(),
             stats_dirty: true,
-        }
-    }
-
-    fn initial_size(&self) -> (usize, usize) {
-        if self.config.fullscreen {
-            screen_size()
-        } else {
-            (self.config.win_w, self.config.win_h)
         }
     }
 
@@ -313,15 +492,15 @@ impl App {
 
     // ---- Entrées ---------------------------------------------------------
 
-    fn handle_menu(&mut self, window: &Window, w: i32, h: i32, mx: i32, my: i32, click: bool) {
-        if window.is_key_pressed(Key::Escape, KeyRepeat::No) {
+    fn handle_menu(&mut self, input: &Input, w: i32, h: i32) {
+        if input.key_pressed(Key::Escape) {
             self.quit = true;
         }
-        if !click {
+        if !input.click {
             return;
         }
         for (id, b) in self.menu_buttons(w, h) {
-            if b.hit(mx, my) {
+            if b.hit(input.mx, input.my) {
                 match id {
                     MenuBtn::Play => self.start_game(false),
                     MenuBtn::Spectate => self.start_game(true),
@@ -333,15 +512,15 @@ impl App {
         }
     }
 
-    fn handle_settings(&mut self, window: &Window, w: i32, h: i32, mx: i32, my: i32, click: bool) {
-        if window.is_key_pressed(Key::Escape, KeyRepeat::No) {
+    fn handle_settings(&mut self, input: &Input, w: i32, h: i32) {
+        if input.key_pressed(Key::Escape) {
             self.screen = Screen::Menu;
         }
-        if !click {
+        if !input.click {
             return;
         }
         for (id, b) in self.settings_buttons(w, h) {
-            if b.hit(mx, my) {
+            if b.hit(input.mx, input.my) {
                 match id {
                     SetBtn::SeedDn => self.config.seed = self.config.seed.wrapping_sub(1),
                     SetBtn::SeedUp => self.config.seed = self.config.seed.wrapping_add(1),
@@ -365,17 +544,7 @@ impl App {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn handle_game(
-        &mut self,
-        window: &Window,
-        w: i32,
-        h: i32,
-        mx: i32,
-        my: i32,
-        click: bool,
-        scroll: f32,
-    ) {
+    fn handle_game(&mut self, input: &Input, w: i32, h: i32) {
         self.frame = self.frame.wrapping_add(1);
         let (ww, wh) = self
             .world
@@ -385,47 +554,47 @@ impl App {
 
         // Déplacement (touche maintenue).
         let pan = 3;
-        if window.is_key_down(Key::A) || window.is_key_down(Key::Left) {
+        if input.key_down(Key::A) || input.key_down(Key::Left) {
             self.cam_x = self.cam_x.saturating_sub(pan);
         }
-        if window.is_key_down(Key::D) || window.is_key_down(Key::Right) {
+        if input.key_down(Key::D) || input.key_down(Key::Right) {
             self.cam_x = (self.cam_x + pan).min(ww - 1);
         }
-        if window.is_key_down(Key::W) || window.is_key_down(Key::Up) {
+        if input.key_down(Key::W) || input.key_down(Key::Up) {
             self.cam_y = self.cam_y.saturating_sub(pan);
         }
-        if window.is_key_down(Key::S) || window.is_key_down(Key::Down) {
+        if input.key_down(Key::S) || input.key_down(Key::Down) {
             self.cam_y = (self.cam_y + pan).min(wh - 1);
         }
-        if scroll > 0.0 {
+        if input.scroll > 0.0 {
             self.px = (self.px + 2).min(40);
-        } else if scroll < 0.0 {
+        } else if input.scroll < 0.0 {
             self.px = self.px.saturating_sub(2).max(6);
         }
 
         // Échap : retour menu.
-        if window.is_key_pressed(Key::Escape, KeyRepeat::No) {
+        if input.key_pressed(Key::Escape) {
             self.screen = Screen::Menu;
             return;
         }
         // Outils.
-        if window.is_key_pressed(Key::F, KeyRepeat::No) {
+        if input.key_pressed(Key::F) {
             self.set_tool(Tool::Found);
         }
-        if window.is_key_pressed(Key::E, KeyRepeat::No) {
+        if input.key_pressed(Key::E) {
             self.set_tool(Tool::Swarm);
         }
-        if window.is_key_pressed(Key::N, KeyRepeat::No) {
+        if input.key_pressed(Key::N) {
             self.set_tool(Tool::None);
         }
         // Fin de tour.
-        if window.is_key_pressed(Key::Space, KeyRepeat::No) {
+        if input.key_pressed(Key::Space) {
             self.end_turn();
         }
         // Chiffres : recherche (joueur) ou vitesse (spectateur).
         if self.spectator {
             for (k, s) in [(Key::Key0, 0u32), (Key::Key1, 1), (Key::Key2, 2)] {
-                if window.is_key_pressed(k, KeyRepeat::No) {
+                if input.key_pressed(k) {
                     self.speed = s;
                 }
             }
@@ -436,7 +605,7 @@ impl App {
                 (Key::Key3, 2),
                 (Key::Key4, 3),
             ] {
-                if window.is_key_pressed(k, KeyRepeat::No) {
+                if input.key_pressed(k) {
                     self.research(b);
                 }
             }
@@ -451,16 +620,34 @@ impl App {
         }
 
         // Clic : boutons d'abord, sinon la carte.
-        if click {
+        if input.click {
             for (id, b) in self.game_buttons(w, h) {
-                if b.hit(mx, my) {
+                if b.hit(input.mx, input.my) {
                     self.do_game_btn(id);
                     return;
                 }
             }
-            if my > TOP_H && my < h - BOT_H {
-                self.map_click(mx, my, w, h);
+            if input.my > TOP_H && input.my < h - BOT_H {
+                self.map_click(input.mx, input.my, w, h);
             }
+        }
+    }
+
+    /// Dispatch entrée selon l'écran courant.
+    fn handle(&mut self, input: &Input, w: i32, h: i32) {
+        match self.screen {
+            Screen::Menu => self.handle_menu(input, w, h),
+            Screen::Settings => self.handle_settings(input, w, h),
+            Screen::Game => self.handle_game(input, w, h),
+        }
+    }
+
+    /// Dispatch rendu selon l'écran courant (après `handle`, donc écran à jour).
+    fn draw(&mut self, w: i32, h: i32, mx: i32, my: i32) {
+        match self.screen {
+            Screen::Menu => self.draw_menu(w, h, mx, my),
+            Screen::Settings => self.draw_settings(w, h, mx, my),
+            Screen::Game => self.draw_game(w, h, mx, my),
         }
     }
 
@@ -588,14 +775,14 @@ impl App {
     fn game_buttons(&self, w: i32, h: i32) -> Vec<(GameBtn, Button)> {
         let mut v = Vec::new();
         let pad = 8;
-        // Haut-droite : Fin de tour, Menu.
-        let bh = 26;
-        let menu_w = 84;
-        let turn_w = 150;
+        // Haut-droite : Fin de tour, Menu (largeurs ajustées au texte, échelle 2).
+        let bh = 28;
+        let menu_w = gui::text_w("Menu", 2) + 20;
+        let turn_w = gui::text_w("Fin de tour", 2) + 20;
         let mxn = w - pad - menu_w;
-        v.push((GameBtn::Menu, Button::new(mxn, 7, menu_w, bh, "Menu")));
+        v.push((GameBtn::Menu, Button::new(mxn, 6, menu_w, bh, "Menu")));
         let mxt = mxn - pad - turn_w;
-        v.push((GameBtn::EndTurn, Button::new(mxt, 7, turn_w, bh, "Fin de tour")));
+        v.push((GameBtn::EndTurn, Button::new(mxt, 6, turn_w, bh, "Fin de tour")));
 
         // Bas : outils puis recherche (ou vitesse en spectateur).
         let by = h - BOT_H + 12;
@@ -911,6 +1098,22 @@ fn screen_size() -> (usize, usize) {
     (1600, 900)
 }
 
+/// Zone de travail (écran moins la barre des tâches) : (x, y, largeur, hauteur).
+/// Utilisée pour le plein écran afin que rien ne soit caché sous la barre.
+fn work_area() -> (i32, i32, i32, i32) {
+    #[cfg(windows)]
+    unsafe {
+        use winapi::shared::windef::RECT;
+        use winapi::um::winuser::{SystemParametersInfoW, SPI_GETWORKAREA};
+        let mut r: RECT = std::mem::zeroed();
+        if SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut r as *mut RECT as *mut _, 0) != 0 {
+            return (r.left, r.top, r.right - r.left, r.bottom - r.top);
+        }
+    }
+    let (w, h) = screen_size();
+    (0, 0, w as i32, h as i32)
+}
+
 /// Arguments de la ligne de commande.
 struct Args {
     seed: u64,
@@ -923,6 +1126,8 @@ struct Args {
     headless: bool,
     shot: Option<String>,
     screen: String,
+    audit: bool,
+    out: Option<String>,
 }
 
 impl Args {
@@ -938,6 +1143,8 @@ impl Args {
             headless: false,
             shot: None,
             screen: "game".to_string(),
+            audit: false,
+            out: None,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -956,6 +1163,8 @@ impl Args {
                         a.screen = v;
                     }
                 }
+                "--audit" => a.audit = true,
+                "--out" => a.out = it.next(),
                 other => eprintln!("argument ignoré : {other}"),
             }
         }
