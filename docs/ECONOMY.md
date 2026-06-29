@@ -3,7 +3,9 @@
 ## RÉVISION (29/06) — influence ∝ taille + IA stratège
 
 - **Influence = flux ∝ territoire + population** (et non plus `+1/mois` forfaitaire) :
-  `INFLUENCE_BASE(1) + cases × INFLUENCE_PER_TILE(1) + pop_totale / INFLUENCE_POP_DIVISOR(2000)`.
+  `INFLUENCE_BASE(3) + cases × INFLUENCE_PER_TILE(2) + pop_totale / INFLUENCE_POP_DIVISOR(1000)`
+  (flux volontairement généreux : le joueur ne doit pas être étranglé en influence ;
+  départ `STARTING_INFLUENCE = 60`).
   Plus une nation est grande et peuplée, plus elle rayonne — et plus elle peut
   s'étendre (l'expansion coûte de l'influence). Boucle vertueuse voulue. ✅ fait.
 - **IA — développement économique plus intelligent & immersif** : priorités

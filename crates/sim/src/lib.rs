@@ -37,13 +37,13 @@ const KNOWLEDGE_RATE: f32 = 1.0;
 
 // --- Calibrage économie interne S8 (single-source) ---
 /// Influence : **plancher** de base gagné chaque mois par une nation vivante.
-const INFLUENCE_BASE: i64 = 1;
+const INFLUENCE_BASE: i64 = 3;
 /// Influence/mois par **case possédée** : le **territoire** pèse (rayonnement).
-const INFLUENCE_PER_TILE: i64 = 1;
+const INFLUENCE_PER_TILE: i64 = 2;
 /// Habitants nécessaires pour **+1 influence/mois** : la **population** pèse.
 /// Plus une nation est peuplée et étendue, plus elle rayonne — et plus elle peut
 /// s'étendre (l'expansion coûte de l'influence). Boucle vertueuse voulue.
-const INFLUENCE_POP_DIVISOR: f32 = 2000.0;
+const INFLUENCE_POP_DIVISOR: f32 = 1000.0;
 /// Coût en influence d'une **expansion** (S2/E5) : étendre son territoire. Public :
 /// l'IA s'en sert pour ne pas s'étendre sans influence.
 pub const SWARM_INFLUENCE: i64 = 10;

@@ -152,8 +152,8 @@ fn influence_scales_with_territory_and_population() {
     // 3 cases possédées, 4000 hab au total (aucune famine : ≤ subsistance/case).
     w.apply(Command::Step);
     let gain = w.nation(0).unwrap().influence - STARTING_INFLUENCE;
-    // base(1) + territoire(3 cases × 1) + population(4000 / 2000 = 2) = 6/mois.
-    assert_eq!(gain, 1 + 3 + 2, "influence ∝ territoire + population");
+    // base(3) + territoire(3 cases × 2) + population(4000 / 1000 = 4) = 13/mois.
+    assert_eq!(gain, 3 + 6 + 4, "influence ∝ territoire + population");
 }
 
 #[test]
