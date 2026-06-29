@@ -36,6 +36,18 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 > l'influence) ; il déplace toujours des colons (main-d'œuvre). Modèle et calibrage
 > **faisant autorité** : `docs/ECONOMY.md` § RÉVISION.
 
+> **Révision militaire (S5) — UNITÉS.** En plus de la `force` (stat de case, levée
+> brute via Mobiliser/Marcher), on a des **unités** : des **agents discrets**
+> (position, PV, dégâts, portée, points de mouvement) recrutés aux **casernes**.
+> Recruter coûte **argent + force** ; les **types** (Infanterie, Archers, Cavalerie)
+> sont débloqués par la branche **Fer**. Les **points de mouvement** dépendent du
+> terrain ET des **intempéries** (pluie/dévastation/gel ralentissent — primitive
+> `path::unit_move_cost`). Au combat, le **terrain du défenseur** donne un bonus de
+> défense (végétation, relief, neige/pluie) et le **terrain de l'attaquant** peut
+> donner un **malus** selon le type (archers en forêt, cavalerie en terrain
+> accidenté). Tout en **entiers** (déterminisme). C'est la **première entorse**
+> assumée au « tout en stats de case » : les unités sont des entités à part entière.
+
 ---
 
 ## 3. Les 6 primitives partagées (la vraie raison du minimalisme)

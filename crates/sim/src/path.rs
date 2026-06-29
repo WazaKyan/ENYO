@@ -29,6 +29,21 @@ pub fn range_budget(essor_tier: u8) -> u32 {
     60 + 40 * essor_tier as u32
 }
 
+/// Coût d'entrée pour une **unité** (S5) : terrain (via `tile_cost`) + **intempéries**
+/// (pluie/orage, terrain ravagé, gel) qui ralentissent la marche. Entier, déterministe.
+pub fn unit_move_cost(tile: &Tile, naval_tier: u8) -> u32 {
+    let base = tile_cost(tile, naval_tier);
+    if base == u32::MAX {
+        return u32::MAX;
+    }
+    let mut penalty = (tile.precip_now * 15.0) as u32; // pluie / orage
+    penalty += (tile.devastation * 25.0) as u32; // terrain ravagé
+    if tile.temperature < 0.0 {
+        penalty += 8; // neige / gel
+    }
+    base + penalty
+}
+
 /// Voisins (4-connexité) avec enroulement sur X et bornage sur Y.
 fn neighbors(idx: usize, width: u32, height: u32) -> [Option<usize>; 4] {
     let w = width as i64;
@@ -48,17 +63,18 @@ fn neighbors(idx: usize, width: u32, height: u32) -> [Option<usize>; 4] {
     out
 }
 
-/// Coût minimal pour atteindre `to` depuis `from`, borné par `budget`.
-/// Renvoie `Some(coût)` si atteignable dans le budget, sinon `None`.
-/// Dijkstra déterministe (tas min sur (coût, index) — tie-break par index).
-pub fn reach_cost(
+/// Coût minimal pour atteindre `to` depuis `from`, borné par `budget`, avec une
+/// **fonction de coût d'entrée** arbitraire (essaimage, unités…). Dijkstra
+/// déterministe (tas min sur (coût, index) — tie-break par index). C'est l'UNIQUE
+/// primitive d'atteignabilité (cf. `CLAUDE.md`).
+pub fn reach_cost_with<F: Fn(&Tile) -> u32>(
     tiles: &[Tile],
     width: u32,
     height: u32,
     from: usize,
     to: usize,
     budget: u32,
-    naval_tier: u8,
+    cost: F,
 ) -> Option<u32> {
     if from == to {
         return Some(0);
@@ -76,7 +92,7 @@ pub fn reach_cost(
             continue;
         }
         for nb in neighbors(u, width, height).into_iter().flatten() {
-            let c = tile_cost(&tiles[nb], naval_tier);
+            let c = cost(&tiles[nb]);
             if c == u32::MAX {
                 continue;
             }
@@ -88,6 +104,21 @@ pub fn reach_cost(
         }
     }
     None
+}
+
+/// Coût d'atteignabilité avec le coût de terrain standard (essaimage, S2).
+pub fn reach_cost(
+    tiles: &[Tile],
+    width: u32,
+    height: u32,
+    from: usize,
+    to: usize,
+    budget: u32,
+    naval_tier: u8,
+) -> Option<u32> {
+    reach_cost_with(tiles, width, height, from, to, budget, |t| {
+        tile_cost(t, naval_tier)
+    })
 }
 
 #[cfg(test)]

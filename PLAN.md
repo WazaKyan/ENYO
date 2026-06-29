@@ -71,7 +71,12 @@ Le joueur fait croître et essaimer sa civilisation sur la grille.
 > territoire (coûte de l'influence). Modèle et calibrage faisant autorité :
 > `docs/ECONOMY.md` § RÉVISION.
 
----
+> **Révision militaire (S5) — unités.** Au-delà de la `force` de case, on recrute des
+> **unités** (agents discrets : PV, dégâts, portée, mouvement) aux **casernes**
+> (coût argent + force ; types Infanterie/Archers/Cavalerie gâtés par la branche
+> **Fer**). Mouvement selon terrain + intempéries ; combat avec bonus de défense du
+> terrain (défenseur) et malus d'attaque selon type×terrain (attaquant). Détail :
+> `docs/GAMEPLAY.md` § Révision militaire.
 
 ## 4. Modèle du monde
 

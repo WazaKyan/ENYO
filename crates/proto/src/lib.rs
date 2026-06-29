@@ -28,6 +28,18 @@ pub enum Building {
     Farm,
 }
 
+/// Type d'unité militaire (S5). Débloqué par la branche **Fer** ; chaque type a
+/// ses stats (PV, dégâts, portée, mouvement) et ses affinités de terrain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum UnitKind {
+    /// Infanterie : polyvalente, robuste, corps à corps (aucun malus de terrain).
+    Infantry,
+    /// Archers : attaque à distance (portée 2), fragiles, **malus en forêt**.
+    Archer,
+    /// Cavalerie : rapide et puissante, **malus en terrain accidenté/forêt**.
+    Cavalry,
+}
+
 /// Une action demandée à la simulation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Command {
@@ -72,6 +84,20 @@ pub enum Command {
         nation: u16,
         building: Building,
     },
+    /// Recrute une **unité** (S5) sur une case possédée portant une **caserne**.
+    /// Coûte de l'argent + de la force (générée par la caserne) ; type tech-gaté.
+    CreateUnit {
+        x: u32,
+        y: u32,
+        nation: u16,
+        kind: UnitKind,
+    },
+    /// Déplace une unité vers une case atteignable dans ses points de mouvement
+    /// (coût terrain + intempéries). L'unité est désignée par son id.
+    MoveUnit { unit: u32, to_x: u32, to_y: u32 },
+    /// Attaque avec une unité une case à portée contenant une unité ennemie
+    /// (combat avec bonus de défense du terrain + malus d'attaque selon le type).
+    AttackUnit { unit: u32, x: u32, y: u32 },
     /// Déclare la guerre à une autre nation.
     DeclareWar { nation: u16, target: u16 },
     /// Fait la paix avec une autre nation.
@@ -155,6 +181,33 @@ pub enum Event {
         attacker_losses: f32,
         defender_losses: f32,
     },
+    /// Une unité a été recrutée (S5).
+    UnitCreated {
+        unit: u32,
+        nation: u16,
+        kind: UnitKind,
+        x: u32,
+        y: u32,
+    },
+    /// Une unité s'est déplacée (coût en points de mouvement consommé).
+    UnitMoved {
+        unit: u32,
+        to_x: u32,
+        to_y: u32,
+        cost: u32,
+    },
+    /// Une unité en a attaqué une autre. `killed` = la défenseuse est détruite.
+    UnitAttacked {
+        attacker: u32,
+        defender: u32,
+        x: u32,
+        y: u32,
+        damage: i32,
+        counter: i32,
+        killed: bool,
+    },
+    /// Une unité a été détruite (PV ≤ 0) — retirée du monde.
+    UnitDestroyed { unit: u32, x: u32, y: u32 },
     /// Une guerre a été déclarée.
     WarDeclared { nation: u16, target: u16 },
     /// La paix a été conclue.

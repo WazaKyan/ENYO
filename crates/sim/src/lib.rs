@@ -16,16 +16,18 @@ pub mod path;
 pub mod province;
 pub mod rng;
 pub mod tile;
+pub mod unit;
 pub mod worldgen;
 
 use std::collections::BTreeSet;
 
 use diplo::Diplomacy;
 use nation::Nation;
-use proto::{Building, Command, Event};
+use proto::{Building, Command, Event, UnitKind};
 use rng::Rng;
 use serde::{Deserialize, Serialize};
 use tile::{Tile, TileKind};
+use unit::Unit;
 
 /// Constante FNV-1a (prime 64 bits) pour le checksum d'audit.
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -75,6 +77,21 @@ const CITIZENS_PER_FOOD: f32 = 100.0;
 const FAMINE_DECLINE: f32 = 0.25;
 /// Dévastation ajoutée par une famine sévère (marque organique, lisible/Directeur).
 const FAMINE_DEVASTATION: f32 = 0.03;
+// --- Combat d'unités (S5) — bonus de défense du terrain (%), quantifiés entiers ---
+/// Défense (%) max apportée par la végétation (couvert) de la case défendue.
+const DEF_VEGETATION: f32 = 35.0;
+/// Défense (%) max apportée par le relief (terrain accidenté/vallonné).
+const DEF_RUGGEDNESS: f32 = 35.0;
+/// Défense (%) max apportée par les intempéries (pluie/orage).
+const DEF_WEATHER: f32 = 20.0;
+/// Défense (%) ajoutée par la neige/le gel (température < 0 °C).
+const DEF_SNOW: i32 = 15;
+/// Plafond du bonus de défense total (%).
+const DEF_CAP: i32 = 85;
+/// Seuil de végétation au-delà duquel une case compte comme « forêt » (malus).
+const FOREST_VEG: f32 = 0.5;
+/// Seuil de relief au-delà duquel une case compte comme « accidentée » (malus).
+const ROUGH_RUG: f32 = 0.4;
 
 /// L'état complet de la partie — reconstructible depuis une graine et une suite
 /// de commandes (donc rejouable).
@@ -90,6 +107,12 @@ pub struct World {
     pub diplomacy: Diplomacy,
     rng: Rng,
     pub tiles: Vec<Tile>,
+    /// Unités militaires (S5) — agents discrets, ordre = ordre de création.
+    #[serde(default)]
+    pub units: Vec<Unit>,
+    /// Prochain id d'unité (monotone → ids stables, rejouables).
+    #[serde(default)]
+    next_unit_id: u32,
 }
 
 impl World {
@@ -107,6 +130,8 @@ impl World {
             diplomacy: Diplomacy::default(),
             rng: Rng::new(seed),
             tiles: gen.tiles,
+            units: Vec::new(),
+            next_unit_id: 1,
         }
     }
 
@@ -203,6 +228,14 @@ impl World {
                 nation,
                 building,
             } => self.build(x, y, nation, building),
+            Command::CreateUnit {
+                x,
+                y,
+                nation,
+                kind,
+            } => self.create_unit(x, y, nation, kind),
+            Command::MoveUnit { unit, to_x, to_y } => self.move_unit(unit, to_x, to_y),
+            Command::AttackUnit { unit, x, y } => self.attack_unit(unit, x, y),
             Command::DeclareWar { nation, target } => self.declare_war(nation, target),
             Command::MakePeace { nation, target } => self.make_peace(nation, target),
             Command::DirectorGrievance { from, to, amount } => {
@@ -567,6 +600,11 @@ impl World {
         // Passe 2 — anthropique (capacité, population, développement, savoir, frontières).
         self.resolve_anthropic();
 
+        // Unités (S5) : recharge des points de mouvement chaque mois.
+        for u in &mut self.units {
+            u.moves_left = unit::unit_stats(u.kind).moves;
+        }
+
         // Les griefs retombent lentement.
         self.diplomacy.decay(0.99);
 
@@ -853,6 +891,234 @@ impl World {
         }]
     }
 
+    // ---- Unités (S5) -----------------------------------------------------
+
+    /// Index de l'unité présente sur (x, y), s'il y en a une (1 unité/case).
+    fn unit_index_at(&self, x: u32, y: u32) -> Option<usize> {
+        self.units.iter().position(|u| u.x == x && u.y == y)
+    }
+
+    /// Index dans `self.units` d'une unité par id.
+    fn unit_index_by_id(&self, id: u32) -> Option<usize> {
+        self.units.iter().position(|u| u.id == id)
+    }
+
+    /// Y a-t-il déjà une unité sur (x, y) ?
+    fn unit_occupied(&self, x: u32, y: u32) -> bool {
+        self.units.iter().any(|u| u.x == x && u.y == y)
+    }
+
+    /// Distance de Manhattan (X enroulé) entre deux cases.
+    fn manhattan(&self, x0: u32, y0: u32, x1: u32, y1: u32) -> u32 {
+        let w = self.width as i64;
+        let dx = (x0 as i64 - x1 as i64).abs();
+        let dx = dx.min(w - dx);
+        let dy = (y0 as i64 - y1 as i64).abs();
+        (dx + dy) as u32
+    }
+
+    /// Bonus de défense (%) du terrain d'une case : végétation + relief + intempéries
+    /// (neige/pluie). Quantifié en entier (couche de décision scalaire), borné.
+    fn defense_bonus(&self, idx: usize) -> i32 {
+        let t = &self.tiles[idx];
+        let mut b = (t.vegetation * DEF_VEGETATION) as i32
+            + (t.ruggedness * DEF_RUGGEDNESS) as i32
+            + (t.precip_now * DEF_WEATHER) as i32;
+        if t.temperature < 0.0 {
+            b += DEF_SNOW;
+        }
+        b.clamp(0, DEF_CAP)
+    }
+
+    /// Malus d'attaque (%) d'un type d'unité depuis le terrain de SA case (ex. des
+    /// archers en forêt, de la cavalerie en terrain accidenté).
+    fn attack_malus(&self, kind: UnitKind, idx: usize) -> i32 {
+        let t = &self.tiles[idx];
+        let s = unit::unit_stats(kind);
+        let mut m = 0;
+        if t.vegetation > FOREST_VEG {
+            m = m.max(s.forest_attack_malus);
+        }
+        if t.ruggedness > ROUGH_RUG {
+            m = m.max(s.rough_attack_malus);
+        }
+        m
+    }
+
+    /// Recrute une unité (S5) sur une case possédée portant une **caserne**. Coûte
+    /// de l'argent (nation) + de la force (de la caserne) ; type gaté par la tech Fer.
+    fn create_unit(&mut self, x: u32, y: u32, nation: u16, kind: UnitKind) -> Vec<Event> {
+        if x >= self.width || y >= self.height {
+            return reject("hors carte");
+        }
+        let idx = self.index(x, y);
+        if self.tiles[idx].owner != Some(nation) {
+            return reject("case non possédée");
+        }
+        if self.tiles[idx].building != Some(Building::Military) {
+            return reject("pas de caserne sur la case");
+        }
+        if self.unit_occupied(x, y) {
+            return reject("case déjà occupée par une unité");
+        }
+        let stats = unit::unit_stats(kind);
+        let ni = self.ensure_nation(nation);
+        if self.nations[ni].tech[nation::FER] < stats.tech_fer {
+            return reject("technologie (Fer) insuffisante pour ce type");
+        }
+        if self.nations[ni].money < stats.cost_money {
+            return reject("argent insuffisant");
+        }
+        if self.tiles[idx].force < stats.cost_force as f32 {
+            return reject("force insuffisante (caserne)");
+        }
+        self.nations[ni].money -= stats.cost_money;
+        self.tiles[idx].force -= stats.cost_force as f32;
+        let id = self.next_unit_id;
+        self.next_unit_id += 1;
+        self.units.push(Unit {
+            id,
+            owner: nation,
+            kind,
+            x,
+            y,
+            hp: stats.max_hp,
+            moves_left: stats.moves,
+        });
+        vec![Event::UnitCreated {
+            unit: id,
+            nation,
+            kind,
+            x,
+            y,
+        }]
+    }
+
+    /// Déplace une unité vers une case atteignable dans ses points de mouvement
+    /// (coût terrain + intempéries via la primitive `path`). Pas d'empilement.
+    fn move_unit(&mut self, unit_id: u32, tx: u32, ty: u32) -> Vec<Event> {
+        if tx >= self.width || ty >= self.height {
+            return reject("hors carte");
+        }
+        let Some(ui) = self.unit_index_by_id(unit_id) else {
+            return reject("unité inconnue");
+        };
+        let (fx, fy, owner, moves_left) = {
+            let u = &self.units[ui];
+            (u.x, u.y, u.owner, u.moves_left)
+        };
+        if (tx, ty) == (fx, fy) {
+            return reject("déjà sur place");
+        }
+        if self.unit_occupied(tx, ty) {
+            return reject("case occupée par une unité");
+        }
+        let from = self.index(fx, fy);
+        let to = self.index(tx, ty);
+        let naval = self.nation(owner).map(|n| n.tech[nation::LIEN]).unwrap_or(0);
+        let cost = path::reach_cost_with(&self.tiles, self.width, self.height, from, to, moves_left, |t| {
+            path::unit_move_cost(t, naval)
+        });
+        match cost {
+            Some(c) => {
+                let u = &mut self.units[ui];
+                u.x = tx;
+                u.y = ty;
+                u.moves_left = u.moves_left.saturating_sub(c);
+                vec![Event::UnitMoved {
+                    unit: unit_id,
+                    to_x: tx,
+                    to_y: ty,
+                    cost: c,
+                }]
+            }
+            None => reject("hors de portée (points de mouvement)"),
+        }
+    }
+
+    /// Attaque avec une unité une case à portée contenant une unité ENNEMIE (guerre
+    /// requise). Dégâts = base × (1 − malus terrain attaquant) ÷ (1 + défense terrain
+    /// défenseur) ; riposte au corps à corps si le défenseur survit.
+    fn attack_unit(&mut self, unit_id: u32, tx: u32, ty: u32) -> Vec<Event> {
+        if tx >= self.width || ty >= self.height {
+            return reject("hors carte");
+        }
+        let Some(ai) = self.unit_index_by_id(unit_id) else {
+            return reject("unité inconnue");
+        };
+        let (ax, ay, attacker_owner, akind) = {
+            let u = &self.units[ai];
+            (u.x, u.y, u.owner, u.kind)
+        };
+        let Some(di) = self.unit_index_at(tx, ty) else {
+            return reject("aucune unité cible");
+        };
+        let (defender_id, defender_owner, dkind) = {
+            let u = &self.units[di];
+            (u.id, u.owner, u.kind)
+        };
+        if defender_owner == attacker_owner {
+            return reject("cible alliée");
+        }
+        if !self.diplomacy.at_war(attacker_owner, defender_owner) {
+            return reject("pas en guerre avec la cible");
+        }
+        let astats = unit::unit_stats(akind);
+        if self.manhattan(ax, ay, tx, ty) > astats.range {
+            return reject("cible hors de portée");
+        }
+        let a_tile = self.index(ax, ay);
+        let d_tile = self.index(tx, ty);
+        // Coup de l'attaquant.
+        let malus = self.attack_malus(akind, a_tile);
+        let def = self.defense_bonus(d_tile);
+        let dealt = ((astats.damage * (100 - malus) / 100) * 100 / (100 + def)).max(1);
+        self.units[di].hp -= dealt;
+        let killed = self.units[di].hp <= 0;
+        // Riposte au corps à corps (échange adjacent, défenseur survivant).
+        let mut counter = 0;
+        if !killed && self.manhattan(ax, ay, tx, ty) == 1 {
+            let dstats = unit::unit_stats(dkind);
+            let dmalus = self.attack_malus(dkind, d_tile);
+            let adef = self.defense_bonus(a_tile);
+            counter = ((dstats.damage * (100 - dmalus) / 100) * 100 / (100 + adef)).max(1);
+            self.units[ai].hp -= counter;
+        }
+        // L'attaque épuise le mouvement de l'attaquant.
+        self.units[ai].moves_left = 0;
+
+        let mut events = vec![Event::UnitAttacked {
+            attacker: unit_id,
+            defender: defender_id,
+            x: tx,
+            y: ty,
+            damage: dealt,
+            counter,
+            killed,
+        }];
+        if killed {
+            self.units.retain(|u| u.id != defender_id);
+            events.push(Event::UnitDestroyed {
+                unit: defender_id,
+                x: tx,
+                y: ty,
+            });
+        }
+        // L'attaquant a pu succomber à la riposte.
+        if let Some(ai2) = self.unit_index_by_id(unit_id) {
+            if self.units[ai2].hp <= 0 {
+                let (ux, uy) = (self.units[ai2].x, self.units[ai2].y);
+                self.units.retain(|u| u.id != unit_id);
+                events.push(Event::UnitDestroyed {
+                    unit: unit_id,
+                    x: ux,
+                    y: uy,
+                });
+            }
+        }
+        events
+    }
+
     /// Checksum déterministe de l'état (FNV-1a). Empreinte d'audit : deux runs
     /// identiques ⇒ mêmes checksums.
     pub fn checksum(&self) -> u64 {
@@ -906,6 +1172,17 @@ impl World {
             h = h.wrapping_mul(FNV_PRIME);
             h ^= n.food as u64;
             h = h.wrapping_mul(FNV_PRIME);
+        }
+        // Unités (S5) : ordre de `units` (création), stable et rejouable.
+        for u in &self.units {
+            fnv_u32(&mut h, u.id);
+            fnv_u32(&mut h, u.owner as u32);
+            h ^= unit::kind_code(u.kind);
+            h = h.wrapping_mul(FNV_PRIME);
+            fnv_u32(&mut h, u.x);
+            fnv_u32(&mut h, u.y);
+            fnv_u32(&mut h, u.hp as u32);
+            fnv_u32(&mut h, u.moves_left);
         }
         for &(a, b) in self.diplomacy.wars() {
             fnv_u32(&mut h, a as u32);
