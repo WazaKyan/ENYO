@@ -66,6 +66,19 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 > bâtit un **port**, recrute une **galère**, y **embarque** une unité, traverse et la
 > **débarque** sur la côte ennemie (invasion maritime). Le manpower (casernes/ports)
 > sert à recruter ET à régénérer les unités sur le territoire national.
+>
+> **Révision agression (S5) — l'IA conquiert vraiment.** L'IA est **maximalement
+> agressive** : elle s'arme dès qu'un rival existe, recrute à **toutes** ses casernes
+> (plafond ∝ 2× territoire), **s'étend vers le rival le plus proche** et déclare la
+> guerre tôt. Pour que la conquête **émerge** (et pas seulement en test), trois
+> correctifs : (a) les nations s'implantent sur le **plus grand continent connexe**
+> (joignables par terre) ; (b) les unités utilisent un **pathfinding Dijkstra** qui
+> contourne les obstacles et vise la case ennemie réellement **atteignable** (et non la
+> plus proche à vol d'oiseau, souvent coincée derrière la mer) ; (c) **règle « au moins
+> une case »** : une unité à pleins points de mouvement franchit **toujours** une case
+> adjacente, même si la météo/dévastation la rend plus chère que son budget — sans
+> cela les unités gelaient sur place. Résultat émergent : des empires montent et
+> tombent (guerres qui aboutissent à des annexions).
 
 ---
 

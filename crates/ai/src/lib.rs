@@ -7,7 +7,8 @@
 //! rejouable/auditable. C'est aussi la base que le futur Directeur (Phase 5)
 //! orchestrera.
 
-use std::collections::HashSet;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use proto::{Building, Command, UnitKind};
 use sim::nation::{ESSOR, FER, LIEN, TERROIR};
@@ -27,12 +28,6 @@ const AI_ECON_BRANCHES: [usize; 3] = [TERROIR, ESSOR, LIEN];
 
 /// Seuil de grief au-delà duquel l'IA déclare la guerre.
 const WAR_THRESHOLD: f32 = 3.0;
-
-/// Distance (Manhattan, ancre) en deçà de laquelle un rival est une **menace** :
-/// l'IA se **militarise** alors (caserne → Fer → unités). Loin de tout rival, elle
-/// se concentre sur le **développement économique** (meilleure croissance, pas de
-/// guns-vs-butter inutile) — stratégie sensible au contexte.
-const MILITARIZE_RANGE: u32 = 35;
 
 /// Plan d'un tour pour une nation IA : recherche + expansion + diplomatie/guerre.
 pub fn plan(world: &World, nation: u16) -> Vec<Command> {
@@ -87,8 +82,10 @@ pub fn plan(world: &World, nation: u16) -> Vec<Command> {
     cmds
 }
 
-/// Essaimage glouton : chaque case ≥1000 hab. vers une terre adjacente libre,
-/// dans la limite de l'influence disponible (E5 : essaimer coûte de l'influence).
+/// Essaimage glouton **orienté vers le rival le plus proche** (agression : les
+/// territoires se rejoignent → friction frontalière → guerre atteignable). Chaque
+/// case ≥1000 hab. s'étend vers la terre adjacente libre qui **rapproche le plus du
+/// rival** (à défaut, la première libre), dans la limite de l'influence (E5).
 fn expansion(world: &World, nation: u16) -> Vec<Command> {
     let w = world.width as i64;
     let h = world.height as i64;
@@ -100,6 +97,8 @@ fn expansion(world: &World, nation: u16) -> Vec<Command> {
     if budget <= 0 {
         return Vec::new();
     }
+    // Ancre du rival le plus proche : on pousse l'expansion dans sa direction.
+    let rival = nearest_rival(world, nation).and_then(|r| nation_anchor(world, r));
     let mut cmds = Vec::new();
     let mut targeted: HashSet<usize> = HashSet::new();
     for (idx, t) in world.tiles.iter().enumerate() {
@@ -111,6 +110,8 @@ fn expansion(world: &World, nation: u16) -> Vec<Command> {
         }
         let x = idx as i64 % w;
         let y = idx as i64 / w;
+        // Voisin libre qui rapproche le plus du rival (sinon le premier libre).
+        let mut best: Option<(usize, u32, u32, u32)> = None; // (v, nx, ny, dist_rival)
         for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
             let nx = (x + dx).rem_euclid(w);
             let ny = y + dy;
@@ -119,16 +120,29 @@ fn expansion(world: &World, nation: u16) -> Vec<Command> {
             }
             let v = (ny * w + nx) as usize;
             let nt = &world.tiles[v];
-            if nt.kind == TileKind::Land && nt.owner.is_none() && targeted.insert(v) {
-                cmds.push(Command::Swarm {
-                    from_x: x as u32,
-                    from_y: y as u32,
-                    to_x: nx as u32,
-                    to_y: ny as u32,
-                });
-                budget -= 1;
-                break;
+            if nt.kind != TileKind::Land || nt.owner.is_some() || targeted.contains(&v) {
+                continue;
             }
+            let dist = rival
+                .map(|(rx, ry)| manhattan(nx as u32, ny as u32, rx, ry, world.width))
+                .unwrap_or(0);
+            let better = match best {
+                None => true,
+                Some((_, _, _, bd)) => dist < bd,
+            };
+            if better {
+                best = Some((v, nx as u32, ny as u32, dist));
+            }
+        }
+        if let Some((v, nx, ny, _)) = best {
+            targeted.insert(v);
+            cmds.push(Command::Swarm {
+                from_x: x as u32,
+                from_y: y as u32,
+                to_x: nx,
+                to_y: ny,
+            });
+            budget -= 1;
         }
     }
     cmds
@@ -172,10 +186,9 @@ fn economy(world: &World, nation: u16) -> Vec<Command> {
     }
     let tiles_owned = world.nation_stats(nation).1 as i64;
     let at_war = at_war_with_anyone(world, nation);
-    // Se militariser SEULEMENT face à une menace : en guerre, ou un rival proche.
-    // Isolée, l'IA reste pacifique et développe son économie (meilleure croissance).
-    let militarize = at_war
-        || nearest_rival_distance(world, nation).is_some_and(|d| d <= MILITARIZE_RANGE);
+    // AGRESSION MAXIMALE : on s'arme dès qu'un rival existe (peu importe la
+    // distance), pour pouvoir l'attaquer dès que possible. Plus de caserne tardive.
+    let militarize = at_war || nearest_rival_distance(world, nation).is_some();
 
     // Liste de souhaits ORDONNÉE par priorité de développement ; on bâtira le
     // premier réellement abordable.
@@ -217,8 +230,8 @@ fn economy(world: &World, nation: u16) -> Vec<Command> {
     if educations * 2 < cities {
         wish.push(Building::Education); // plus de science
     }
-    if at_war && militaries < cities {
-        wish.push(Building::Military);
+    if militarize && militaries < cities {
+        wish.push(Building::Military); // plus de casernes = plus de recrutement
     }
     // 3) Connecter un territoire étalé.
     if infras * 6 < tiles_owned {
@@ -332,59 +345,205 @@ fn nearest_rival(world: &World, nation: u16) -> Option<u16> {
     best
 }
 
-/// Destination (case terre, libre d'unité) atteinte en marchant **plusieurs pas**
-/// vers la cible dans la limite des points de mouvement — pour traverser vite. La
-/// case finale est libre ; le chemin (validé ensuite par `MoveUnit`) peut traverser.
+/// Prochaine destination vers (tx,ty) en **contournant les obstacles** (l'ancienne
+/// descente gloutonne se coinçait sur le moindre relief/golfe → les unités
+/// n'atteignaient jamais l'ennemi). Dijkstra **borné et déterministe** (tas min sur
+/// (coût, index), tie-break index) depuis l'unité, coût d'entrée selon le domaine
+/// (terre/eau + intempéries). Reconstruit le chemin vers la cible (ou, si elle est
+/// hors d'atteinte, vise le nœud exploré le plus proche du but → progrès chaque
+/// tour) et renvoie la case la **plus loin atteignable ce tour** (coût cumulé ≤
+/// `moves_left`) qui soit **libre d'unité**. HashMap utilisée en LECTURE seule
+/// (jamais itérée pour décider) → rejeu identique.
 fn march_toward(world: &World, nation: u16, u: &Unit, tx: u32, ty: u32) -> Option<(u32, u32)> {
     let is_naval = unit_stats(u.kind).naval;
     let naval_tier = world.nation(nation).map(|n| n.tech[LIEN]).unwrap_or(0);
+    let width = world.width;
     let (w, h) = (world.width as i64, world.height as i64);
-    let (mut cx, mut cy) = (u.x, u.y);
-    let mut budget = u.moves_left;
-    let mut dest: Option<(u32, u32)> = None;
-    for _ in 0..8 {
-        if (cx, cy) == (tx, ty) {
+    let start = (u.y * width + u.x) as usize;
+    let target = (ty * width + tx) as usize;
+    if start == target {
+        return None;
+    }
+    let mut dist: HashMap<usize, u32> = HashMap::new();
+    let mut prev: HashMap<usize, usize> = HashMap::new();
+    dist.insert(start, 0);
+    let mut heap = BinaryHeap::new();
+    heap.push(Reverse((0u32, start)));
+    // Cible hors d'atteinte ? on retiendra le nœud exploré le plus proche du but
+    // (min (manhattan, coût, index)), mis à jour à chaque extraction (ordre du tas
+    // déterministe) → l'unité progresse quand même vers l'ennemi.
+    let mut best_goal = start;
+    let mut best_key = (manhattan(u.x, u.y, tx, ty, width), 0u32, start);
+    let mut reached = false;
+    let mut explored = 0usize;
+    while let Some(Reverse((d, idx))) = heap.pop() {
+        if d > *dist.get(&idx).unwrap_or(&u32::MAX) {
+            continue;
+        }
+        if idx == target {
+            reached = true;
             break;
         }
-        let cur_d = manhattan(cx, cy, tx, ty, world.width);
-        let mut nb: Option<(u32, u32, u32)> = None; // (x, y, coût)
-        let mut nb_d = cur_d;
+        let (cx, cy) = (idx as u32 % width, idx as u32 / width);
+        let key = (manhattan(cx, cy, tx, ty, width), d, idx);
+        if key < best_key {
+            best_key = key;
+            best_goal = idx;
+        }
+        explored += 1;
+        if explored > 4000 {
+            break; // plafond : borne le coût d'une recherche sur grande carte
+        }
+        let (x, y) = (idx as i64 % w, idx as i64 / w);
         for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
-            let nx = (cx as i64 + dx).rem_euclid(w);
-            let ny = cy as i64 + dy;
+            let nx = (x + dx).rem_euclid(w);
+            let ny = y + dy;
             if ny < 0 || ny >= h {
                 continue;
             }
-            let (nx, ny) = (nx as u32, ny as u32);
-            // Coût selon le domaine : navale = eau (terre infranchissable) ;
-            // terrestre = terre (eau selon la tech navale). MAX = infranchissable.
+            let v = (ny * w + nx) as usize;
+            // Coût selon le domaine (terre/eau + intempéries). MAX = infranchissable.
             let cost = if is_naval {
-                sim::path::naval_move_cost(world.tile(nx, ny))
+                sim::path::naval_move_cost(world.tile(nx as u32, ny as u32))
             } else {
-                sim::path::unit_move_cost(world.tile(nx, ny), naval_tier)
+                sim::path::unit_move_cost(world.tile(nx as u32, ny as u32), naval_tier)
             };
-            if cost == u32::MAX || cost > budget {
+            if cost == u32::MAX {
                 continue;
             }
-            let d = manhattan(nx, ny, tx, ty, world.width);
-            if d < nb_d {
-                nb_d = d;
-                nb = Some((nx, ny, cost));
+            let nd = d.saturating_add(cost);
+            if nd < *dist.get(&v).unwrap_or(&u32::MAX) {
+                dist.insert(v, nd);
+                prev.insert(v, idx);
+                heap.push(Reverse((nd, v)));
             }
-        }
-        match nb {
-            Some((nx, ny, cost)) => {
-                budget -= cost;
-                cx = nx;
-                cy = ny;
-                if !world.units.iter().any(|x| x.x == cx && x.y == cy) {
-                    dest = Some((cx, cy)); // dernière case libre atteinte
-                }
-            }
-            None => break,
         }
     }
-    dest
+    let goal = if reached { target } else { best_goal };
+    if goal == start {
+        return None;
+    }
+    // Reconstruit le chemin start..goal, puis prend la case la plus loin
+    // atteignable ce tour (coût ≤ moves_left) qui soit libre d'unité.
+    let mut path = vec![goal];
+    let mut cur = goal;
+    while cur != start {
+        cur = *prev.get(&cur)?;
+        path.push(cur);
+    }
+    path.reverse();
+    let mut dest = None;
+    for &idx in &path {
+        if idx == start {
+            continue;
+        }
+        if *dist.get(&idx).unwrap_or(&u32::MAX) > u.moves_left {
+            break;
+        }
+        let (cx, cy) = (idx as u32 % width, idx as u32 / width);
+        if !world.units.iter().any(|x| x.x == cx && x.y == cy) {
+            dest = Some((cx, cy));
+        }
+    }
+    // « Au moins une case » : sinon, premier pas à pleins points de mouvement.
+    dest.or_else(|| step_at_full_moves(world, u, &path, width))
+}
+
+/// Marche vers la case ennemie **réellement atteignable** la plus proche (par coût
+/// de chemin RÉEL — un seul Dijkstra borné déterministe depuis l'unité : la
+/// première case ennemie extraite du tas est la moins coûteuse à rejoindre). Évite
+/// le piège de viser une cible « proche à vol d'oiseau » mais coincée derrière la
+/// mer (l'unité restait alors plantée sur sa côte). Renvoie la case la plus loin
+/// atteignable ce tour (libre d'unité) sur ce chemin ; `None` si aucune cible
+/// ennemie n'est joignable par terre dans l'horizon (→ l'appelant tente le naval).
+fn march_to_enemy(world: &World, nation: u16, u: &Unit, enemy: &HashSet<usize>) -> Option<(u32, u32)> {
+    let naval_tier = world.nation(nation).map(|n| n.tech[LIEN]).unwrap_or(0);
+    let width = world.width;
+    let (w, h) = (world.width as i64, world.height as i64);
+    let start = (u.y * width + u.x) as usize;
+    let mut dist: HashMap<usize, u32> = HashMap::new();
+    let mut prev: HashMap<usize, usize> = HashMap::new();
+    dist.insert(start, 0);
+    let mut heap = BinaryHeap::new();
+    heap.push(Reverse((0u32, start)));
+    let mut explored = 0usize;
+    let mut goal: Option<usize> = None;
+    while let Some(Reverse((d, idx))) = heap.pop() {
+        if d > *dist.get(&idx).unwrap_or(&u32::MAX) {
+            continue;
+        }
+        // Première cible ennemie extraite = la moins coûteuse à atteindre (Dijkstra).
+        if idx != start && enemy.contains(&idx) {
+            goal = Some(idx);
+            break;
+        }
+        explored += 1;
+        if explored > 12000 {
+            break; // plafond : borne le coût sur très grande carte
+        }
+        let (x, y) = (idx as i64 % w, idx as i64 / w);
+        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+            let nx = (x + dx).rem_euclid(w);
+            let ny = y + dy;
+            if ny < 0 || ny >= h {
+                continue;
+            }
+            let v = (ny * w + nx) as usize;
+            let cost = sim::path::unit_move_cost(world.tile(nx as u32, ny as u32), naval_tier);
+            if cost == u32::MAX {
+                continue;
+            }
+            let nd = d.saturating_add(cost);
+            if nd < *dist.get(&v).unwrap_or(&u32::MAX) {
+                dist.insert(v, nd);
+                prev.insert(v, idx);
+                heap.push(Reverse((nd, v)));
+            }
+        }
+    }
+    let goal = goal?;
+    // Reconstruit start..goal, puis la case la plus loin atteignable ce tour (libre).
+    let mut path = vec![goal];
+    let mut cur = goal;
+    while cur != start {
+        cur = *prev.get(&cur)?;
+        path.push(cur);
+    }
+    path.reverse();
+    let mut dest = None;
+    for &idx in &path {
+        if idx == start {
+            continue;
+        }
+        if *dist.get(&idx).unwrap_or(&u32::MAX) > u.moves_left {
+            break;
+        }
+        let (cx, cy) = (idx as u32 % width, idx as u32 / width);
+        // La case-cible ennemie peut être libre (on l'occupe) ; une case
+        // intermédiaire occupée par une unité est sautée (on prend la précédente).
+        if !world.units.iter().any(|x| x.x == cx && x.y == cy) {
+            dest = Some((cx, cy));
+        }
+    }
+    // Si rien n'est atteignable dans le budget (case suivante trop chère — météo /
+    // dévastation), on tente quand même le PREMIER pas à pleins points de mouvement
+    // (le sim applique la règle « au moins une case ») → l'unité progresse toujours.
+    dest.or_else(|| step_at_full_moves(world, u, &path, width))
+}
+
+/// Règle « au moins une case » côté IA : à pleins points de mouvement, renvoie la
+/// première case du chemin (adjacente, libre) même si son coût dépasse le budget —
+/// le sim l'autorise. Évite les unités gelées par une case trop chère.
+fn step_at_full_moves(world: &World, u: &Unit, path: &[usize], width: u32) -> Option<(u32, u32)> {
+    if u.moves_left != unit_stats(u.kind).moves {
+        return None;
+    }
+    let &first = path.get(1)?;
+    let (cx, cy) = (first as u32 % width, first as u32 / width);
+    if world.units.iter().any(|x| x.x == cx && x.y == cy) {
+        return None; // occupée par une unité : on attend
+    }
+    Some((cx, cy))
 }
 
 /// Militaire IA : recrute aux casernes, **occupe** le territoire ennemi (déplace
@@ -403,10 +562,12 @@ fn military(world: &World, nation: u16) -> Vec<Command> {
         .map(|u| (u.x, u.y))
         .collect();
     let mut enemy_tiles: Vec<(u32, u32)> = Vec::new();
+    let mut enemy_set: HashSet<usize> = HashSet::new();
     for (idx, t) in world.tiles.iter().enumerate() {
         if let Some(o) = t.owner {
             if o != nation && at_war(o) && t.occupier != Some(nation) {
                 enemy_tiles.push(coords(idx, width));
+                enemy_set.insert(idx);
             }
         }
     }
@@ -414,10 +575,12 @@ fn military(world: &World, nation: u16) -> Vec<Command> {
         return cmds; // pas en guerre / plus rien à conquérir
     }
 
-    // 1) Recrutement (1/tour) à une caserne libre, sous un plafond ∝ territoire.
+    // 1) Recrutement AGRESSIF : à CHAQUE caserne libre ce tour, sous un gros
+    //    plafond ∝ territoire, dans la limite de ce qu'on peut payer (argent +
+    //    manpower). Plus d'unités = on submerge l'occupation adverse → capitulation.
     let my_units = world.units.iter().filter(|u| u.owner == nation).count() as u32;
     let tiles_owned = world.tiles.iter().filter(|t| t.owner == Some(nation)).count() as u32;
-    let cap = tiles_owned.clamp(3, 24);
+    let cap = (tiles_owned * 2).clamp(6, 40);
     if my_units < cap {
         if let Some(n) = world.nation(nation) {
             let kind = if n.tech[FER] >= 2 {
@@ -428,15 +591,23 @@ fn military(world: &World, nation: u16) -> Vec<Command> {
                 UnitKind::Infantry
             };
             let s = unit_stats(kind);
-            // Manpower (national) suffisant pour ce type ?
-            if n.manpower >= s.cost_force && n.money >= s.cost_money {
-                for (idx, t) in world.tiles.iter().enumerate() {
-                    if t.owner == Some(nation) && t.building == Some(Building::Military) {
-                        let (x, y) = coords(idx, width);
-                        if !world.units.iter().any(|u| u.x == x && u.y == y) {
-                            cmds.push(Command::CreateUnit { x, y, nation, kind });
-                            break;
-                        }
+            // Combien d'unités on peut s'offrir ce tour (plafond, argent, manpower).
+            let mut budget = cap - my_units;
+            if s.cost_money > 0 {
+                budget = budget.min((n.money / s.cost_money) as u32);
+            }
+            if s.cost_force > 0 {
+                budget = budget.min((n.manpower / s.cost_force) as u32);
+            }
+            for (idx, t) in world.tiles.iter().enumerate() {
+                if budget == 0 {
+                    break;
+                }
+                if t.owner == Some(nation) && t.building == Some(Building::Military) {
+                    let (x, y) = coords(idx, width);
+                    if !world.units.iter().any(|u| u.x == x && u.y == y) {
+                        cmds.push(Command::CreateUnit { x, y, nation, kind });
+                        budget -= 1;
                     }
                 }
             }
@@ -463,15 +634,35 @@ fn military(world: &World, nation: u16) -> Vec<Command> {
             });
             continue;
         }
-        // Adjacent à une galère chargeable -> rester sur place pour embarquer
-        // (sinon l'unité s'éloignerait vers l'ennemi et raterait le bateau).
+        // ASSAUT TERRESTRE (priorité) : marcher vers la case ennemie réellement
+        // ATTEIGNABLE la plus proche (coût de chemin RÉEL, pas à vol d'oiseau) → on
+        // entre en territoire ennemi et on l'OCCUPE (collant) ; c'est ce qui fait
+        // grimper le score de guerre jusqu'à la capitulation.
+        if let Some((nx, ny)) = march_to_enemy(world, nation, u, &enemy_set) {
+            cmds.push(Command::MoveUnit {
+                unit: u.id,
+                to_x: nx,
+                to_y: ny,
+            });
+            continue;
+        }
+        // Aucune route terrestre vers l'ennemi → voie NAVALE : rejoindre une galère
+        // chargeable (puis embarquer) pour franchir la mer.
         if let Some((gx, gy)) = nearest_loadable_galley(world, nation, u) {
             if manhattan(u.x, u.y, gx, gy, width) <= 1 {
+                continue; // adjacent : attendre l'embarquement
+            }
+            if let Some((nx, ny)) = march_toward(world, nation, u, gx, gy) {
+                cmds.push(Command::MoveUnit {
+                    unit: u.id,
+                    to_x: nx,
+                    to_y: ny,
+                });
                 continue;
             }
         }
-        // Avancer vers la case ennemie la plus proche (par terre).
-        let mut moved = false;
+        // Sinon, fluage directionnel vers l'ennemi le plus proche à vol d'oiseau
+        // (hors horizon de recherche mais peut-être atteignable de proche en proche).
         if let Some(&(tx, ty)) = enemy_tiles
             .iter()
             .min_by_key(|&&(tx, ty)| manhattan(u.x, u.y, tx, ty, width))
@@ -482,22 +673,6 @@ fn military(world: &World, nation: u16) -> Vec<Command> {
                     to_x: nx,
                     to_y: ny,
                 });
-                moved = true;
-            }
-        }
-        // Bloqué par la mer ? rejoindre une galère amie avec de la place (pour
-        // embarquer ensuite) — c'est ainsi que l'IA monte une invasion maritime.
-        if !moved {
-            if let Some((gx, gy)) = nearest_loadable_galley(world, nation, u) {
-                if manhattan(u.x, u.y, gx, gy, width) > 1 {
-                    if let Some((nx, ny)) = march_toward(world, nation, u, gx, gy) {
-                        cmds.push(Command::MoveUnit {
-                            unit: u.id,
-                            to_x: nx,
-                            to_y: ny,
-                        });
-                    }
-                }
             }
         }
     }
@@ -686,6 +861,53 @@ fn adjacent_land_unit(world: &World, nation: u16, x: u32, y: u32) -> Option<u32>
 /// croître bien au-delà de 1000 (donc s'étendre), sans soft-lock de démarrage.
 const HOSPITABLE_CAP: f32 = 1500.0;
 
+/// Masque de la **plus grande masse continentale connexe** (4-connexité, X
+/// enroulé). On y implante toutes les nations → elles sont **joignables par voie
+/// terrestre**, condition pour que l'agression aboutisse (sinon chaque nation est
+/// isolée sur son île). Flood-fill en ordre d'index → déterministe.
+fn largest_land_component(world: &World) -> Vec<bool> {
+    let (w, h) = (world.width as i64, world.height as i64);
+    let n = world.tiles.len();
+    let mut comp = vec![u32::MAX; n];
+    let mut sizes: Vec<u32> = Vec::new();
+    for s in 0..n {
+        if world.tiles[s].kind != TileKind::Land || comp[s] != u32::MAX {
+            continue;
+        }
+        let id = sizes.len() as u32;
+        let mut size = 0u32;
+        let mut stack = vec![s];
+        comp[s] = id;
+        while let Some(c) = stack.pop() {
+            size += 1;
+            let (x, y) = (c as i64 % w, c as i64 / w);
+            for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+                let nx = (x + dx).rem_euclid(w);
+                let ny = y + dy;
+                if ny < 0 || ny >= h {
+                    continue;
+                }
+                let v = (ny * w + nx) as usize;
+                if world.tiles[v].kind == TileKind::Land && comp[v] == u32::MAX {
+                    comp[v] = id;
+                    stack.push(v);
+                }
+            }
+        }
+        sizes.push(size);
+    }
+    // Plus grande composante (égalité → plus petit id → déterministe).
+    let best = sizes
+        .iter()
+        .enumerate()
+        .max_by_key(|&(i, &s)| (s, Reverse(i)))
+        .map(|(i, _)| i as u32);
+    match best {
+        Some(b) => comp.iter().map(|&c| c == b).collect(),
+        None => vec![false; n],
+    }
+}
+
 /// Place `count` nations sur des terres **accueillantes** (haute capacité), tirées
 /// **aléatoirement mais de façon seedée** : même graine ⇒ même placement ⇒ rejeu
 /// identique (contrat de déterminisme). On conserve un espacement minimal, avec
@@ -695,13 +917,19 @@ pub fn spawn_nations(world: &World, count: u16, player: u16) -> Vec<Command> {
     if count == 0 {
         return out;
     }
-    // Candidats : on descend les paliers de capacité jusqu'à en avoir assez.
+    // Toutes les nations sur la PLUS GRANDE masse continentale connexe : ainsi
+    // elles peuvent se rejoindre par voie terrestre et l'agression aboutit (sinon
+    // chaque nation reste sur son île, les armées ne se rencontrent jamais).
+    let continent = largest_land_component(world);
+    // Candidats accueillants DANS ce continent : paliers de capacité décroissants
+    // jusqu'à en avoir assez (dernier palier = n'importe quelle terre du continent).
     let mut candidates: Vec<(u32, u32)> = Vec::new();
     for &thr in &[HOSPITABLE_CAP, 1000.0, 600.0, 400.0, 1.0] {
         candidates.clear();
         for y in 0..world.height {
             for x in 0..world.width {
-                if world.tile(x, y).kind == TileKind::Land && world.capacity_at(x, y) >= thr {
+                let i = (y * world.width + x) as usize;
+                if continent[i] && world.capacity_at(x, y) >= thr {
                     candidates.push((x, y));
                 }
             }
@@ -720,9 +948,10 @@ pub fn spawn_nations(world: &World, count: u16, player: u16) -> Vec<Command> {
         let j = (rng.next_u64() % (i as u64 + 1)) as usize;
         candidates.swap(i, j);
     }
-    // Distance min pour répartir les nations, puis repli sans contrainte.
+    // Espacement minimal plus SERRÉ qu'avant (contact rapide → friction → guerre),
+    // avec repli sans contrainte si le continent est petit.
     let span = world.width.min(world.height) as f32;
-    let min_dist = (span / (2.0 * (count as f32).sqrt())).max(10.0) as i64;
+    let min_dist = (span / (3.0 * (count as f32).sqrt())).max(5.0) as i64;
     let mut placed: Vec<(u32, u32)> = Vec::new();
     for &(x, y) in &candidates {
         if placed.len() == count as usize {

@@ -151,6 +151,42 @@ fn unit_moves_then_runs_out_of_points() {
     assert!(matches!(ev[0], Event::UnitMoved { .. }), "rechargé: {:?}", ev[0]);
 }
 
+#[test]
+fn unit_always_advances_one_tile_through_costly_terrain() {
+    // Règle « au moins une case » : une case adjacente dont le coût d'entrée DÉPASSE
+    // les points de mouvement (météo/dévastation) doit rester franchissable à pleins
+    // points (sinon l'unité gèle et aucune armée n'atteint l'ennemi). Le mouvement
+    // consomme alors tout le budget.
+    let mut w = World::new(4, 40, 30);
+    plain(&mut w, 5, 5);
+    plain(&mut w, 6, 5);
+    // Case (6,5) très coûteuse : pluie + dévastation max → coût ≫ 30 (points infanterie).
+    let d = idx(&w, 6, 5);
+    w.tiles[d].precip_now = 1.0;
+    w.tiles[d].devastation = 1.0;
+    assert!(
+        sim::path::unit_move_cost(w.tile(6, 5), 0) > unit_stats(UnitKind::Infantry).moves,
+        "le test exige une case plus chère que le budget de mouvement"
+    );
+    setup_barracks(&mut w, 5, 5, 0);
+    w.apply(Command::CreateUnit {
+        x: 5,
+        y: 5,
+        nation: 0,
+        kind: UnitKind::Infantry,
+    });
+    let id = w.units[0].id;
+    // À pleins points, l'unité entre quand même dans la case adjacente coûteuse.
+    let ev = w.apply(Command::MoveUnit {
+        unit: id,
+        to_x: 6,
+        to_y: 5,
+    });
+    assert!(matches!(ev[0], Event::UnitMoved { .. }), "doit avancer d'une case: {:?}", ev[0]);
+    assert_eq!((w.units[0].x, w.units[0].y), (6, 5));
+    assert_eq!(w.units[0].moves_left, 0, "tout le mouvement est consommé");
+}
+
 /// Dégâts d'une attaque infligés au défenseur, pour un terrain défenseur (veg, rug)
 /// et un terrain attaquant (attacker_veg) donnés.
 fn attack_damage(attacker: UnitKind, attacker_veg: f32, def_veg: f32, def_rug: f32) -> i32 {

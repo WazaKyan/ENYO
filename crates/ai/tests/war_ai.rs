@@ -22,6 +22,50 @@ fn land(w: &mut World, x: u32, y: u32) {
 }
 
 #[test]
+fn ai_conquers_in_2d() {
+    // Carte 2D plate entièrement en terre : nation 0 (ville + caserne, dotée) doit
+    // marcher vers nation 1 à 7 cases, l'occuper et la faire capituler. Isole la
+    // conquête 2D (les autres tests de conquête sont des bandes 1D).
+    let mut w = World::new(1, 14, 7);
+    for t in &mut w.tiles {
+        t.kind = TileKind::Land;
+        t.ruggedness = 0.0;
+        t.precip_now = 0.0;
+        t.temperature = 15.0;
+    }
+    w.apply(Command::Settle { x: 2, y: 3, nation: 0, population: 3000 });
+    w.apply(Command::Settle { x: 3, y: 3, nation: 0, population: 500 });
+    let i = idx(&w, 2, 3);
+    w.tiles[i].building = Some(Building::City);
+    let i = idx(&w, 3, 3);
+    w.tiles[i].building = Some(Building::Military);
+    let n0 = w.nations.iter().position(|n| n.id == 0).unwrap();
+    w.nations[n0].money = 20000;
+    w.nations[n0].materials = 2000;
+    w.nations[n0].manpower = 2000;
+    w.nations[n0].tech[FER] = 1;
+    w.apply(Command::Settle { x: 10, y: 3, nation: 1, population: 100 });
+    w.apply(Command::DeclareWar { nation: 0, target: 1 });
+
+    let mut won = false;
+    for _ in 0..200 {
+        for c in plan(&w, 0) {
+            w.apply(c);
+        }
+        w.apply(Command::Step);
+        if w.nation_stats(1).1 == 0 {
+            won = true;
+            break;
+        }
+    }
+    assert!(
+        won,
+        "l'IA doit conquérir en 2D (restant : {} cases)",
+        w.nation_stats(1).1
+    );
+}
+
+#[test]
 fn ai_invades_across_water() {
     // Deux ÎLES séparées par l'océan : l'IA doit bâtir un port, une galère,
     // embarquer une unité, traverser et débarquer pour conquérir l'ennemi.

@@ -1146,7 +1146,35 @@ impl World {
                 path::unit_move_cost(t, naval)
             })
         };
-        match cost {
+        // Règle « au moins une case » : si la destination est ADJACENTE et
+        // franchissable et que l'unité a TOUS ses points de mouvement (n'a pas
+        // encore bougé ce tour), elle peut toujours y entrer en les consommant tous.
+        // Sans cela, une météo/dévastation forte (coût d'entrée > points de
+        // mouvement) gèlerait l'unité définitivement et aucune armée n'atteindrait
+        // jamais l'ennemi (bug de fond de l'agression IA).
+        let effective = match cost {
+            Some(c) => Some(c),
+            None => {
+                let full = unit::unit_stats(kind).moves;
+                let entry = if unit::unit_stats(kind).naval {
+                    path::naval_move_cost(&self.tiles[to])
+                } else {
+                    let naval = self.nation(owner).map(|n| n.tech[nation::LIEN]).unwrap_or(0);
+                    path::unit_move_cost(&self.tiles[to], naval)
+                };
+                let dxw = {
+                    let dx = (fx as i64 - tx as i64).abs();
+                    dx.min(self.width as i64 - dx)
+                };
+                let adjacent = dxw + (fy as i64 - ty as i64).abs() == 1;
+                if moves_left == full && entry != u32::MAX && adjacent {
+                    Some(moves_left) // une case, tout le mouvement consommé
+                } else {
+                    None
+                }
+            }
+        };
+        match effective {
             Some(c) => {
                 {
                     let u = &mut self.units[ui];

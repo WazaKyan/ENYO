@@ -9,9 +9,19 @@
 - **IA — développement économique plus intelligent & immersif** : priorités
   adaptatives + meilleure case (cf. la puce « IA — développement économique
   stratégique » plus bas), **éducation** (science→tech) et **infrastructure** (qu'elle
-  ne bâtissait jamais), **Fer** recherché une fois militarisée (Archers→Cavalerie),
-  et **militarisation sensible au contexte** (caserne seulement face à un rival
-  proche / en guerre, sinon priorité au développement). ✅ fait.
+  ne bâtissait jamais), **Fer** recherché une fois militarisée (Archers→Cavalerie). ✅ fait.
+- **IA AGRESSIVE (conquête émergente)** : l'IA s'arme **dès qu'un rival existe**
+  (caserne tôt), recrute à **toutes** ses casernes (plafond ∝ 2× territoire, borné
+  par argent+manpower), **s'étend vers le rival le plus proche** (les territoires se
+  rejoignent), et **déclare la guerre dès qu'elle a une caserne**. Trois correctifs de
+  fond ont débloqué la conquête : (a) **implantation sur le plus grand continent
+  connexe** (les armées peuvent se rejoindre par terre) ; (b) **pathfinding Dijkstra**
+  des unités (contourne les obstacles ; vise la case ennemie réellement *atteignable*,
+  pas à vol d'oiseau) ; (c) **règle « au moins une case »** (sim) : une unité à pleins
+  points franchit toujours une case adjacente, même si la météo/dévastation la rend
+  plus chère que son budget — sinon les unités gelaient et n'atteignaient jamais
+  l'ennemi. Résultat : guerres qui **aboutissent** (occupation → capitulation →
+  annexion), empires qui montent et tombent. ✅ fait.
 
 ## RÉVISION (clarification du 28/06) — territoire ≠ villes
 
@@ -61,11 +71,11 @@
   éducation pour la science→tech), **connecter** un territoire étalé (**infrastructure**),
   sinon **grandir** (ville). On bâtit le **premier souhait abordable** (pas de blocage).
   Placement : villes/fermes sur la **terre la plus fertile** (capacité max), le reste
-  sur la moins fertile (on préserve la bonne terre). **Militarisation sensible au
-  contexte** : caserne + recherche **Fer** (Archers→Cavalerie) **seulement** face à un
-  rival proche (`MILITARIZE_RANGE`) ou en guerre ; isolée, l'IA développe son économie.
-  Recherche : économie/expansion (Terroir, Essor, Lien) en continu, **Fer** si elle a
-  une caserne. ✅ **fait**.
+  sur la moins fertile (on préserve la bonne terre). **Militarisation agressive** :
+  caserne **dès qu'un rival existe**, recherche **Fer** (Archers→Cavalerie),
+  recrutement à **toutes** les casernes (plafond ∝ 2× territoire), **expansion vers le
+  rival** et **guerre déclarée tôt**. Recherche : Terroir/Essor/Lien en continu,
+  **Fer** si elle a une caserne. ✅ **fait**.
 
 > Le reste du document décrit la conception initiale ; en cas de divergence, la
 > section RÉVISION ci-dessus prime.
