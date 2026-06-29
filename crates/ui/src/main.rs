@@ -7,7 +7,7 @@
 //! Max, boutons en bas). L'horloge murale est confinée ici (`RealtimeClock`),
 //! `sim` ne la voit jamais → déterminisme/rejeu intacts (1 tick = 1 mois).
 //! Espace = UN tick manuel (utile en pause). clic = inspecter / agir · F =
-//! Fonder · E = Essaimer (2 clics) · M = Mobiliser · B = Marcher (2 clics, combat
+//! Fonder · E = Étendre (2 clics) · V = Ville · M = Mobiliser · B = Marcher (combat
 //! si ennemi) · G = Guerre · P = Paix (clic sur case ennemie) · N = inspecter ·
 //! 1-4 = recherche (mode Jeu) · WASD = bouger · molette = zoom · Échap = menu.
 //! En spectateur / rejeu : 0-4 = vitesse au clavier.
@@ -147,7 +147,7 @@ impl Input {
 }
 
 /// Touches surveillées chaque frame (pour bâtir l'Input depuis la fenêtre).
-const WATCH: [Key; 28] = [
+const WATCH: [Key; 29] = [
     Key::A,
     Key::D,
     Key::W,
@@ -170,6 +170,7 @@ const WATCH: [Key; 28] = [
     Key::U,
     Key::K,
     Key::Y,
+    Key::V,
     Key::Space,
     Key::Key0,
     Key::Key1,
@@ -863,6 +864,7 @@ impl App {
                 (Key::U, Tool::Build(Building::Education)),
                 (Key::K, Tool::Build(Building::Military)),
                 (Key::Y, Tool::Build(Building::Farm)),
+                (Key::V, Tool::Build(Building::City)),
             ] {
                 if input.key_pressed(k) {
                     self.set_tool(t);
@@ -1096,7 +1098,7 @@ impl App {
                     self.report(&ev);
                 } else {
                     self.pending_src = Some((tx, ty));
-                    self.last_msg = format!("source essaimage ({tx},{ty}) - clique la cible");
+                    self.last_msg = format!("source expansion ({tx},{ty}) - clique la cible");
                 }
             }
             Tool::Mobilize => {
@@ -1234,7 +1236,7 @@ impl App {
             &[
                 ("Inspecter", Tool::None),
                 ("Fonder", Tool::Found),
-                ("Essaimer", Tool::Swarm),
+                ("Étendre", Tool::Swarm),
                 ("Mobiliser", Tool::Mobilize),
                 ("Marcher", Tool::March),
                 ("Guerre", Tool::War),
@@ -1254,6 +1256,7 @@ impl App {
         if playing {
             let mut x = pad;
             for (lbl, b) in [
+                ("Ville", Building::City),
                 ("Industrie", Building::Industry),
                 ("Commerce", Building::Commerce),
                 ("Infrastructure", Building::Infrastructure),
@@ -1405,11 +1408,12 @@ impl App {
         let toolname = match self.tool {
             Tool::None => "Inspecter",
             Tool::Found => "Fonder",
-            Tool::Swarm => "Essaimer",
+            Tool::Swarm => "Étendre",
             Tool::Mobilize => "Mobiliser",
             Tool::March => "Marcher",
             Tool::War => "Guerre",
             Tool::Peace => "Paix",
+            Tool::Build(Building::City) => "Ville",
             Tool::Build(Building::Industry) => "Industrie",
             Tool::Build(Building::Commerce) => "Commerce",
             Tool::Build(Building::Infrastructure) => "Infrastructure",
@@ -1425,7 +1429,7 @@ impl App {
             .unwrap_or_default();
         {
             let mut c = Canvas::new(&mut buf, uw, uh);
-            // Surbrillance de la case sélectionnée / source d'essaimage.
+            // Surbrillance de la case sélectionnée / source d'expansion.
             let (x0, y0, cols, rows, pxe) = rect;
             let mark = |c: &mut Canvas, t: Option<(u32, u32)>, col: u32| {
                 if let Some((tx, ty)) = t {
@@ -1565,6 +1569,7 @@ fn step_world(world: &mut World, player: u16, nations: u16, spectator: bool) {
 /// Nom français d'un bâtiment (les chaînes d'affichage sont en français).
 fn building_fr(b: Building) -> &'static str {
     match b {
+        Building::City => "Ville",
         Building::Industry => "Industrie",
         Building::Commerce => "Commerce",
         Building::Infrastructure => "Infrastructure",
@@ -1584,7 +1589,7 @@ fn feedback(events: &[Event]) -> Option<String> {
             } => return Some(format!("fonde ({x},{y}) +{population} hab")),
             Event::Swarmed {
                 to_x, to_y, moved, ..
-            } => return Some(format!("essaimage vers ({to_x},{to_y}) +{moved:.0} hab")),
+            } => return Some(format!("expansion vers ({to_x},{to_y}) +{moved:.0} hab")),
             Event::Researched { branch, tier, .. } => {
                 let b = ["Essor", "Terroir", "Fer", "Lien"]
                     .get(*branch as usize)

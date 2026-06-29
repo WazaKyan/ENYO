@@ -131,8 +131,8 @@ fn commerce_makes_money_and_housing_from_materials() {
         money0,
         n.money
     );
-    // (L'habitation produite est consommée par l'urbanisation → population ;
-    //  c'est `housing_urbanizes_population` qui vérifie ce volet.)
+    // (L'habitation produite par le commerce sert désormais à FONDER des villes ;
+    //  cf. `city_grows_population`.)
 }
 
 #[test]
@@ -354,61 +354,64 @@ fn swarm_costs_influence() {
     );
 }
 
-/// Croissance de C (case faible) sur 15 mois, avec ou sans commerce (donc avec ou
-/// sans habitation pour l'urbanisation). La croissance naturelle est identique →
-/// la différence isole l'urbanisation (habitation → population).
-fn growth_of_weak_tile(with_commerce: bool) -> f32 {
+#[test]
+fn city_grows_population() {
+    // Refonte « villes uniquement » : seule une case VILLE engendre de la
+    // population ; une case possédée SANS ville garde sa population (main-d'œuvre).
     let mut w = World::new(19, 80, 60);
-    let [a, b, c] = three_land_in_row(&w);
-    w.apply(Command::Settle {
-        x: a.0,
-        y: a.1,
-        nation: 0,
-        population: 1500,
-    });
-    w.apply(Command::Settle {
-        x: b.0,
-        y: b.1,
-        nation: 0,
-        population: 1500,
-    });
-    w.apply(Command::Settle {
-        x: c.0,
-        y: c.1,
-        nation: 0,
-        population: 30,
-    });
-    w.apply(Command::Build {
-        x: a.0,
-        y: a.1,
-        nation: 0,
-        building: Building::Industry,
-    });
-    for _ in 0..40 {
-        w.apply(Command::Step);
-    }
-    if with_commerce {
-        w.apply(Command::Build {
-            x: b.0,
-            y: b.1,
+    let [a, b, _] = three_land_in_row(&w);
+    for p in [a, b] {
+        w.apply(Command::Settle {
+            x: p.0,
+            y: p.1,
             nation: 0,
-            building: Building::Commerce,
+            population: 200,
         });
     }
-    let c0 = w.tile(c.0, c.1).population;
-    for _ in 0..15 {
+    // Ville sur A seulement (coûte 100 argent + 50 habitation ; départ : 60 hab).
+    let ev = w.apply(Command::Build {
+        x: a.0,
+        y: a.1,
+        nation: 0,
+        building: Building::City,
+    });
+    assert!(matches!(ev[0], Event::Built { .. }), "ville fondée sur A");
+    for _ in 0..20 {
         w.apply(Command::Step);
     }
-    w.tile(c.0, c.1).population - c0
+    assert!(
+        w.tile(a.0, a.1).population > 200.0,
+        "la ville doit croître (got {})",
+        w.tile(a.0, a.1).population
+    );
+    assert!(
+        (w.tile(b.0, b.1).population - 200.0).abs() < 1.0,
+        "une case sans ville ne croît pas (got {})",
+        w.tile(b.0, b.1).population
+    );
 }
 
 #[test]
-fn housing_urbanizes_population() {
-    let with = growth_of_weak_tile(true);
-    let without = growth_of_weak_tile(false);
+fn unfed_dense_city_starves() {
+    // Famine : la population au-delà de la subsistance (1500/case) qui n'est pas
+    // nourrie décline. Sans ferme, une case dense reflue vers la subsistance.
+    let mut w = World::new(29, 80, 60);
+    let (x, y) = productive(&w);
+    w.apply(Command::Settle {
+        x,
+        y,
+        nation: 0,
+        population: 3000, // bien au-dessus de la subsistance
+    });
+    let p0 = w.tile(x, y).population;
+    for _ in 0..8 {
+        w.apply(Command::Step);
+    }
+    let p1 = w.tile(x, y).population;
+    assert!(p1 < p0, "sans nourriture, la population dense décline ({p0} -> {p1})");
     assert!(
-        with > without,
-        "l'habitation (commerce) accélère la croissance ({without} -> {with})"
+        p1 > 1000.0,
+        "la famine reflue vers la subsistance, sans tout effacer (got {p1})"
     );
 }
 

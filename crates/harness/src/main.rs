@@ -87,6 +87,19 @@ fn main() {
                 population: 300,
             },
         );
+        // La case d'implantation devient une ville (la population ne croît que sur
+        // les villes) — cohérent avec la genèse multi-nations (`spawn_nations`).
+        run_command(
+            &mut world,
+            &mut rec,
+            &mut log,
+            Command::Build {
+                x,
+                y,
+                nation: 0,
+                building: proto::Building::City,
+            },
+        );
         if args.auto_expand {
             vec![0]
         } else {

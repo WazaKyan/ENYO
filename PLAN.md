@@ -63,6 +63,14 @@ Le joueur fait croître et essaimer sa civilisation sur la grille.
 
 ✅ Décidé : partage **50/50**, cible **choisie par le joueur** (auto pour les IA), seuil **1000 fixe**, monde **cylindrique** (wrap est-ouest), arbre de tech à **4 branches**. Le design complet (7 systèmes cœur, synergies, conflits, playbook du Directeur) est dans **`docs/GAMEPLAY.md`**.
 
+> **Révision économie (S8).** La boucle ci-dessus est précisée : la **croissance
+> (point 2) se fait UNIQUEMENT sur les *villes*** (une ville est désormais un
+> **bâtiment** qu'on bâtit avec habitation + argent), elle est **bornée par la
+> nourriture** (fermes vs **famine** au-delà d'un seuil de subsistance par case), et
+> l'**« essaimage » (point 3) est renommé « expansion » (Étendre)** = revendiquer du
+> territoire (coûte de l'influence). Modèle et calibrage faisant autorité :
+> `docs/ECONOMY.md` § RÉVISION.
+
 ---
 
 ## 4. Modèle du monde

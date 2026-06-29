@@ -36,11 +36,9 @@ const KNOWLEDGE_RATE: f32 = 1.0;
 // --- Calibrage économie interne S8 (single-source) ---
 /// Influence gagnée par nation et par mois (de base).
 const INFLUENCE_BASE: i64 = 1;
-/// Coût en influence d'un essaimage (S2/E5) : étendre son territoire. Public :
-/// l'IA s'en sert pour ne pas essaimer sans influence.
+/// Coût en influence d'une **expansion** (S2/E5) : étendre son territoire. Public :
+/// l'IA s'en sert pour ne pas s'étendre sans influence.
 pub const SWARM_INFLUENCE: i64 = 10;
-/// Population engendrée par unité d'habitation consommée (urbanisation).
-const POP_PER_HOUSING: f32 = 1.0;
 /// Matériaux max/mois d'une industrie idéale, pleinement dotée en main-d'œuvre.
 const INDUSTRY_BASE: f32 = 8.0;
 /// Population connectée pour une main-d'œuvre pleine (au-delà : plafonnée).
@@ -63,6 +61,20 @@ const SOLDIERS_BASE: f32 = 20.0;
 const MILITARY_UPKEEP: i64 = 4;
 /// Nourriture/mois d'une ferme idéale (main-d'œuvre pleine) ; ∝ terrain (E6).
 const FARM_BASE: f32 = 12.0;
+// --- Villes & famine (refonte « villes uniquement + famine ») ---
+/// Population qu'amène la fondation d'une ville (colons) — amorce la croissance.
+const CITY_SEED_POP: f32 = 100.0;
+/// Subsistance par case : population nourrie « gratuitement » (cueillette /
+/// agriculture vivrière locale). Seule la population **au-delà** de ce seuil, sur
+/// une case, réclame de la nourriture cultivée (fermes) — donc seules les **villes
+/// denses** subissent la famine. (Garde les petites implantations stables.)
+const SUBSISTENCE_PER_TILE: f32 = 1500.0;
+/// Habitants nourris par 1 unité de nourriture et par mois (calibrage famine).
+const CITIZENS_PER_FOOD: f32 = 100.0;
+/// Fraction de la population **non nourrie** qui décline chaque mois (famine).
+const FAMINE_DECLINE: f32 = 0.25;
+/// Dévastation ajoutée par une famine sévère (marque organique, lisible/Directeur).
+const FAMINE_DEVASTATION: f32 = 0.03;
 
 /// L'état complet de la partie — reconstructible depuis une graine et une suite
 /// de commandes (donc rejouable).
@@ -628,7 +640,12 @@ impl World {
                 let neighbor = neighbor_pop_sum(&old_pop, width, height, x, y);
 
                 let t = &mut self.tiles[idx];
-                dynamics::grow_population(t, capacity);
+                // Refonte « villes uniquement » : seule une case VILLE engendre de
+                // la population (croissance logistique vers la capacité du terrain).
+                // Les autres cases gardent leur population (colons, main-d'œuvre).
+                if t.building == Some(Building::City) {
+                    dynamics::grow_population(t, capacity);
+                }
                 dynamics::grow_development(t, pop, neighbor);
                 t.devastation *= 0.95;
                 let dev = t.development;
@@ -741,31 +758,58 @@ impl World {
             self.nations[i].food += food_gain[i];
         }
 
-        // Urbanisation (E5) : l'habitation (produite par le commerce) comble les
-        // villes vers leur capacité (commerce → population). Consommée en ordre
-        // d'index, jamais au-delà de la capacité (pas de famine artificielle).
-        for y in 0..height {
-            for x in 0..width {
-                let idx = y as usize * width as usize + x as usize;
-                let Some(owner) = self.tiles[idx].owner else {
+        // --- Nourriture & famine (refonte « villes uniquement + famine ») ---
+        // Toute la population mange chaque mois, AU-DELÀ d'un seuil de subsistance
+        // par case (les petites implantations se nourrissent seules ; seules les
+        // villes denses réclament des fermes). Consommation ENTIÈRE par nation,
+        // en ordre d'index → rejeu exact ; la pénurie fait DÉCLINER la population
+        // non nourrie (famine). `ids` est local (pas d'emprunt de self dans les
+        // boucles sur les cases).
+        let ids: Vec<u16> = self.nations.iter().map(|n| n.id).collect();
+        let index_of = |id: u16| ids.iter().position(|&x| x == id);
+
+        // Besoin par nation = somme, sur ses cases, de la population au-delà de la
+        // subsistance (les « bouches » à nourrir par l'agriculture).
+        let mut needy = vec![0.0f32; self.nations.len()];
+        for t in &self.tiles {
+            if let Some(i) = t.owner.and_then(index_of) {
+                needy[i] += (t.population - SUBSISTENCE_PER_TILE).max(0.0);
+            }
+        }
+        // Fraction nourrie par nation = min(1, réserve / besoin). On consomme la
+        // nourriture due ; tout surplus de réserve est reporté (stock tampon).
+        let mut fed_fraction = vec![1.0f32; self.nations.len()];
+        for i in 0..self.nations.len() {
+            let consumption = (needy[i] / CITIZENS_PER_FOOD).round() as i64;
+            if consumption <= 0 {
+                continue;
+            }
+            let food = self.nations[i].food;
+            if food >= consumption {
+                self.nations[i].food = food - consumption;
+            } else {
+                self.nations[i].food = 0;
+                fed_fraction[i] = (food as f32 / consumption as f32).clamp(0.0, 1.0);
+            }
+        }
+        // Déclin de la population non nourrie (au-delà de la subsistance, par case),
+        // proportionnel au déficit. Une famine marque la case (dévastation).
+        if fed_fraction.iter().any(|&f| f < 1.0) {
+            for t in &mut self.tiles {
+                let Some(i) = t.owner.and_then(index_of) else {
                     continue;
                 };
-                let Some(i) = self.nations.iter().position(|n| n.id == owner) else {
-                    continue;
-                };
-                if self.nations[i].housing <= 0 {
+                if fed_fraction[i] >= 1.0 {
                     continue;
                 }
-                let terroir = self.nations[i].tech[nation::TERROIR];
-                let capacity = dynamics::carrying_capacity(&self.tiles[idx], terroir);
-                let headroom = (capacity - self.tiles[idx].population).max(0.0);
-                let units = (headroom / POP_PER_HOUSING)
-                    .floor()
-                    .min(self.nations[i].housing as f32);
-                if units >= 1.0 {
-                    self.tiles[idx].population += units * POP_PER_HOUSING;
-                    self.nations[i].housing -= units as i64;
+                let excess = (t.population - SUBSISTENCE_PER_TILE).max(0.0);
+                if excess <= 0.0 {
+                    continue;
                 }
+                let unfed = excess * (1.0 - fed_fraction[i]);
+                t.population -= unfed * FAMINE_DECLINE;
+                t.devastation =
+                    (t.devastation + FAMINE_DEVASTATION * (1.0 - fed_fraction[i])).min(1.0);
             }
         }
     }
@@ -785,14 +829,22 @@ impl World {
         if self.tiles[idx].building.is_some() {
             return reject("case déjà bâtie");
         }
-        let (money_cost, mat_cost) = build_cost(building);
+        let (money_cost, mat_cost, housing_cost) = build_cost(building);
         let ni = self.ensure_nation(nation);
-        if self.nations[ni].money < money_cost || self.nations[ni].materials < mat_cost {
+        if self.nations[ni].money < money_cost
+            || self.nations[ni].materials < mat_cost
+            || self.nations[ni].housing < housing_cost
+        {
             return reject("ressources insuffisantes");
         }
         self.nations[ni].money -= money_cost;
         self.nations[ni].materials -= mat_cost;
+        self.nations[ni].housing -= housing_cost;
         self.tiles[idx].building = Some(building);
+        // Fonder une ville amène des colons (amorce la croissance logistique).
+        if building == Building::City && self.tiles[idx].population < CITY_SEED_POP {
+            self.tiles[idx].population = CITY_SEED_POP;
+        }
         vec![Event::Built {
             x,
             y,
@@ -833,6 +885,7 @@ impl World {
                 Some(proto::Building::Education) => 6,
                 Some(proto::Building::Military) => 7,
                 Some(proto::Building::Farm) => 8,
+                Some(proto::Building::City) => 9,
             };
             h = h.wrapping_mul(FNV_PRIME);
         }
@@ -875,15 +928,17 @@ pub fn tech_cost(tier: u8) -> f32 {
     25.0 * (tier as f32 + 1.0)
 }
 
-/// Coût de construction (argent, matériaux) d'un bâtiment (S8, single-source).
-pub fn build_cost(b: Building) -> (i64, i64) {
+/// Coût de construction (argent, matériaux, habitation) d'un bâtiment (S8,
+/// single-source). Seule la **ville** coûte de l'habitation (logements à bâtir).
+pub fn build_cost(b: Building) -> (i64, i64, i64) {
     match b {
-        Building::Industry => (100, 0),
-        Building::Commerce => (120, 20),
-        Building::Infrastructure => (40, 20),
-        Building::Education => (150, 30),
-        Building::Military => (120, 40),
-        Building::Farm => (80, 15),
+        Building::City => (100, 0, 50),
+        Building::Industry => (100, 0, 0),
+        Building::Commerce => (120, 20, 0),
+        Building::Infrastructure => (40, 20, 0),
+        Building::Education => (150, 30, 0),
+        Building::Military => (120, 40, 0),
+        Building::Farm => (80, 15, 0),
     }
 }
 
@@ -986,12 +1041,13 @@ mod tests {
 
     #[test]
     fn build_costs_frozen() {
-        assert_eq!(build_cost(Building::Industry), (100, 0));
-        assert_eq!(build_cost(Building::Commerce), (120, 20));
-        assert_eq!(build_cost(Building::Infrastructure), (40, 20));
-        assert_eq!(build_cost(Building::Education), (150, 30));
-        assert_eq!(build_cost(Building::Military), (120, 40));
-        assert_eq!(build_cost(Building::Farm), (80, 15));
+        assert_eq!(build_cost(Building::City), (100, 0, 50));
+        assert_eq!(build_cost(Building::Industry), (100, 0, 0));
+        assert_eq!(build_cost(Building::Commerce), (120, 20, 0));
+        assert_eq!(build_cost(Building::Infrastructure), (40, 20, 0));
+        assert_eq!(build_cost(Building::Education), (150, 30, 0));
+        assert_eq!(build_cost(Building::Military), (120, 40, 0));
+        assert_eq!(build_cost(Building::Farm), (80, 15, 0));
     }
 
     #[test]

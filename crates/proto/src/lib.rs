@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 /// Vocation d'une case (système S8 — économie interne). Une case n'en porte qu'une.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Building {
+    /// Ville : **produit de la population** (croissance vers la capacité du terrain),
+    /// **consomme de la nourriture**. C'est la « case d'habitation » à laquelle les
+    /// autres bâtiments se connectent. Coûte de l'habitation + de l'argent à fonder.
+    City,
     /// Produit des matériaux (∝ stats de case × pop connectée) ; pollue (dévastation).
     Industry,
     /// Transforme les matériaux en argent + habitation + croissance.

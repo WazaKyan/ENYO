@@ -1,7 +1,7 @@
 //! Tests de la boucle cœur (Phase 2) : implantation, croissance, essaimage,
 //! rejets audités, et déterminisme en présence de commandes joueur.
 
-use proto::{Command, Event};
+use proto::{Building, Command, Event};
 use sim::tile::TileKind;
 use sim::World;
 
@@ -68,12 +68,20 @@ fn settle_then_population_grows() {
         population: 200,
     });
     assert!(matches!(ev[0], Event::Settled { .. }));
+    // Refonte « villes uniquement » : la population ne croît que sur une VILLE.
+    let ev = w.apply(Command::Build {
+        x,
+        y,
+        nation: 0,
+        building: Building::City,
+    });
+    assert!(matches!(ev[0], Event::Built { .. }), "ville fondée");
     let p0 = w.tile(x, y).population;
     for _ in 0..24 {
         w.apply(Command::Step);
     }
     let p1 = w.tile(x, y).population;
-    assert!(p1 > p0, "la population doit croître: {p0} -> {p1}");
+    assert!(p1 > p0, "la population doit croître sur la ville: {p0} -> {p1}");
     assert!(w.nation(0).is_some());
 }
 

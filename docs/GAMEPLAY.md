@@ -27,6 +27,15 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 
 **Substrat (Phase 1, pas un « système ») :** génération seedée + couches géologie/climat/biosphère/météo à cadences différentes. Tout le reste n'en est que *lecture pure*.
 
+> **Révision économie (S8, juin) — S1/S2 mis à jour.** Le « peuplement » est dissocié
+> du territoire : la **croissance de population se fait UNIQUEMENT sur les *villes***
+> (une **ville est un bâtiment** de S8, pas le territoire) et elle est **bornée par la
+> nourriture** — chaque case a un **seuil de subsistance** ; au-delà, la population doit
+> être nourrie par des **fermes**, sinon **famine** (déclin). L'**« essaimage » de S2
+> est renommé « expansion » (Étendre)** = revendiquer du territoire (coûte de
+> l'influence) ; il déplace toujours des colons (main-d'œuvre). Modèle et calibrage
+> **faisant autorité** : `docs/ECONOMY.md` § RÉVISION.
+
 ---
 
 ## 3. Les 6 primitives partagées (la vraie raison du minimalisme)

@@ -14,6 +14,9 @@ pub const BRANCHES: usize = 4;
 
 /// Stock d'argent au départ d'une nation (S8 — de quoi bâtir ses premières cases).
 pub const STARTING_MONEY: i64 = 500;
+/// Habitation au départ : de quoi **fonder une première ville** (la genèse pose une
+/// ville sur la case d'implantation). Ensuite, l'habitation vient du commerce.
+pub const STARTING_HOUSING: i64 = 60;
 
 /// Une nation (le joueur est la nation 0).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,9 +35,10 @@ pub struct Nation {
     pub materials: i64,
     /// Influence : +1/mois de base ; étendre le territoire.
     pub influence: i64,
-    /// Habitation : produite par le commerce ; bâtir des villes (E6).
+    /// Habitation : produite par le commerce ; **coût pour fonder une ville**.
     pub housing: i64,
-    /// Nourriture : produite par les fermes ; nourrit la population (E6).
+    /// Nourriture : produite par les fermes ; **toute la population en consomme**
+    /// chaque mois (au-delà d'un seuil de subsistance par case) — pénurie = famine.
     pub food: i64,
 }
 
@@ -47,7 +51,7 @@ impl Nation {
             money: STARTING_MONEY,
             materials: 0,
             influence: 0,
-            housing: 0,
+            housing: STARTING_HOUSING,
             food: 0,
         }
     }

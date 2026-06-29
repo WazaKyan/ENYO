@@ -365,12 +365,13 @@ fn draw_tile(img: &mut RgbImage, bx: u32, by: u32, px: u32, t: &Tile) {
 /// Couleur de la pastille d'un bâtiment (S8).
 fn building_color(b: Building) -> [u8; 3] {
     match b {
-        Building::Industry => [206, 122, 42],       // orange (industrie/fumée)
-        Building::Commerce => [70, 162, 220],       // bleu (échanges)
+        Building::City => [240, 240, 245],           // blanc (cœur urbain)
+        Building::Industry => [206, 122, 42],        // orange (industrie/fumée)
+        Building::Commerce => [70, 162, 220],        // bleu (échanges)
         Building::Infrastructure => [150, 150, 156], // gris (routes)
-        Building::Education => [180, 96, 206],       // violet (savoir)
-        Building::Military => [206, 64, 60],         // rouge (armée)
-        Building::Farm => [216, 196, 70],            // jaune (récolte)
+        Building::Education => [180, 96, 206],        // violet (savoir)
+        Building::Military => [206, 64, 60],          // rouge (armée)
+        Building::Farm => [216, 196, 70],             // jaune (récolte)
     }
 }
 

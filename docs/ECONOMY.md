@@ -4,19 +4,30 @@
 
 - **Territoire** = les cases possédées : la **zone** où l'on bâtit et où s'accumule
   l'**influence**. L'**expansion** étend le territoire et coûte de l'influence
-  (l'ancien « essaimer » est renommé **« Étendre »**).
-- **Ville = un type de BÂTIMENT** (pas le territoire). Coûte **habitation + argent**.
-  **Produit de la population**, **consomme de la nourriture**. C'est la « case
-  d'habitation » à laquelle les autres bâtiments se connectent.
+  (l'ancien « essaimer » est renommé **« Étendre »** dans l'UI). ✅ fait.
+- **Ville = un type de BÂTIMENT** (pas le territoire). Coûte **habitation + argent**
+  (`build_cost(City) = (100 argent, 0 mat, 50 habitation)`). À sa fondation, des
+  **colons** s'installent (`CITY_SEED_POP = 100`) pour amorcer la croissance. Une
+  ville est la **seule** case où la population croît (logistique vers la capacité du
+  terrain) ; c'est aussi la « case d'habitation » à laquelle les autres bâtiments se
+  connectent. ✅ **fait (tranche B)**.
 - **Ferme** = bâtiment : **produit de la nourriture** (rendement ∝ terrain :
   humidité/pluie, température, sol), coûte matériaux + argent, exige une population
   connectée. ✅ **fait (tranche A)**.
-- **Nourriture** = nouvelle ressource. ✅ fait.
-- **Croissance de la population : VILLES UNIQUEMENT + FAMINE** (choix joueur) — la
-  population ne croît que sur les cases **Ville** (nourries) ; toute la population
-  **mange de la nourriture** chaque mois ; sans fermes suffisantes → **déclin
-  (famine)**. Remplace l'urbanisation auto d'E5. ⏳ **tranche B** (refonte : touche
-  S1 et l'IA — l'IA doit bâtir villes + fermes).
+- **Nourriture** = ressource. **Toute la population mange chaque mois**, AU-DELÀ d'un
+  **seuil de subsistance par case** (`SUBSISTENCE_PER_TILE = 1500` : les petites
+  implantations se nourrissent seules ; seules les **villes denses** réclament des
+  fermes). 1 nourriture nourrit `CITIZENS_PER_FOOD = 100` habitants/mois ; tout
+  surplus est reporté (stock tampon). ✅ fait.
+- **Famine** : sans réserve suffisante, la population **non nourrie décline**
+  (`FAMINE_DECLINE = 0.25`/mois de la part non nourrie) et la case se **dévaste** un
+  peu (`FAMINE_DEVASTATION`, signal organique lu par le Directeur). Une ville dense
+  privée de fermes **reflue vers la subsistance**. Remplace l'urbanisation auto d'E5.
+  ✅ **fait (tranche B)**.
+- **Croissance = VILLES UNIQUEMENT + FAMINE** (choix joueur). ✅ **fait (tranche B)**.
+- **IA & genèse** : `spawn_nations` **fonde une ville** par nation (départ avec
+  `STARTING_HOUSING = 60`) ; l'IA bâtit une chaîne minimale **industrie → ferme →
+  commerce → ville** (un bâtiment/tour, selon ses ressources). ✅ **fait (tranche B)**.
 
 > Le reste du document décrit la conception initiale ; en cas de divergence, la
 > section RÉVISION ci-dessus prime.

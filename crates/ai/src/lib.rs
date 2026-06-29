@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 
-use proto::Command;
+use proto::{Building, Command};
 use sim::nation::{ESSOR, LIEN, TERROIR};
 use sim::tile::TileKind;
 use sim::World;
@@ -41,6 +41,10 @@ pub fn plan(world: &World, nation: u16) -> Vec<Command> {
             });
         }
     }
+
+    // Économie : bâtir (industrie → ferme → commerce → ville) pour soutenir la
+    // population — qui ne croît que via les villes, et qui doit être nourrie.
+    cmds.extend(economy(world, nation));
 
     cmds.extend(expansion(world, nation));
 
@@ -122,6 +126,59 @@ fn expansion(world: &World, nation: u16) -> Vec<Command> {
     cmds
 }
 
+/// Économie IA (minimale, déterministe) : bâtit AU PLUS UN bâtiment/tour sur la
+/// première case possédée et vide (ordre d'index), selon une priorité qui amorce
+/// la chaîne ville → population : **industrie** (matériaux) → **ferme** (nourriture,
+/// pour étendre les villes au-delà de la subsistance) → **commerce** (habitation)
+/// → **ville** (nouveau foyer). Respecte les coûts (argent / matériaux / habitation).
+fn economy(world: &World, nation: u16) -> Vec<Command> {
+    let Some(n) = world.nation(nation) else {
+        return Vec::new();
+    };
+    let mut industries = 0;
+    let mut farms = 0;
+    let mut commerces = 0;
+    let mut empty: Option<usize> = None;
+    for (idx, t) in world.tiles.iter().enumerate() {
+        if t.owner != Some(nation) {
+            continue;
+        }
+        match t.building {
+            Some(Building::Industry) => industries += 1,
+            Some(Building::Farm) => farms += 1,
+            Some(Building::Commerce) => commerces += 1,
+            None if t.kind == TileKind::Land && empty.is_none() => empty = Some(idx),
+            _ => {}
+        }
+    }
+    let Some(idx) = empty else {
+        return Vec::new(); // pas de case libre où bâtir
+    };
+    let affordable = |b: Building| {
+        let (m, mat, h) = sim::build_cost(b);
+        n.money >= m && n.materials >= mat && n.housing >= h
+    };
+    // Au moins autant de fermes que d'industries (nourrir les villes denses).
+    let pick = if industries == 0 && affordable(Building::Industry) {
+        Building::Industry
+    } else if farms <= industries && affordable(Building::Farm) {
+        Building::Farm
+    } else if commerces == 0 && affordable(Building::Commerce) {
+        Building::Commerce
+    } else if affordable(Building::City) {
+        Building::City
+    } else {
+        return Vec::new();
+    };
+    let (x, y) = coords(idx, world.width);
+    vec![Command::Build {
+        x,
+        y,
+        nation,
+        building: pick,
+    }]
+}
+
 /// Trouve une case (source ≥1000 hab.) frontalière d'une case ennemie en guerre.
 fn find_attack(world: &World, nation: u16) -> Option<(usize, usize)> {
     let w = world.width as i64;
@@ -176,11 +233,20 @@ pub fn spawn_nations(world: &World, count: u16) -> Vec<Command> {
         }
     }
     for (i, (x, y)) in placed.into_iter().enumerate() {
+        let nation = i as u16;
         out.push(Command::Settle {
             x,
             y,
-            nation: i as u16,
+            nation,
             population: 300,
+        });
+        // La case d'implantation devient une VILLE : la population ne croît que sur
+        // les villes, donc chaque nation démarre avec un foyer en croissance.
+        out.push(Command::Build {
+            x,
+            y,
+            nation,
+            building: Building::City,
         });
     }
     out
