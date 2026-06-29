@@ -1,0 +1,14 @@
+[package]
+name = "ui"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+proto.workspace = true
+sim.workspace = true
+ai.workspace = true
+render.workspace = true
+# minifb : fenêtre framebuffer ; build PROUVÉ sur la toolchain GNU
+# (winapi-x86_64-pc-windows-gnu, libs d'import précompilées, zéro windows-sys).
+# Épinglé : ne JAMAIS laisser passer une version tirant windows-sys/raw-dylib.
+minifb = "=0.28.0"

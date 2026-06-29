@@ -76,6 +76,60 @@ pub fn save_overview(world: &World, scale: u32, path: &str) -> Result<(), String
         .map_err(|e| e.to_string())
 }
 
+/// Ancre le coin du viewport en centrant la caméra, borné à la carte.
+fn clamp_cam(cam: u32, span: u32, max: u32) -> u32 {
+    cam.saturating_sub(span / 2).min(max.saturating_sub(span))
+}
+
+/// Viewport → buffer ARGB (`0x00RRGGBB`) de `win_w`×`win_h`, pour minifb.
+/// La caméra (en cases) est centrée ; le pixel fenêtre == le pixel PNG.
+pub fn viewport_argb(
+    world: &World,
+    cam_x: u32,
+    cam_y: u32,
+    px: u32,
+    win_w: u32,
+    win_h: u32,
+) -> Vec<u32> {
+    let px = px.clamp(4, 64);
+    let cols = (win_w / px).max(1);
+    let rows = (win_h / px).max(1);
+    let x0 = clamp_cam(cam_x, cols, world.width);
+    let y0 = clamp_cam(cam_y, rows, world.height);
+    let img = region(world, x0, y0, cols, rows, px);
+    let mut buf = vec![0u32; (win_w * win_h) as usize];
+    let iw = img.width().min(win_w);
+    let ih = img.height().min(win_h);
+    for y in 0..ih {
+        for x in 0..iw {
+            let p = img.get_pixel(x, y).0;
+            buf[(y * win_w + x) as usize] =
+                ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32;
+        }
+    }
+    buf
+}
+
+/// Même viewport, sauvegardé en PNG (voie agent : fenêtre == PNG).
+pub fn viewport_png(
+    world: &World,
+    cam_x: u32,
+    cam_y: u32,
+    px: u32,
+    win_w: u32,
+    win_h: u32,
+    path: &str,
+) -> Result<(), String> {
+    let px = px.clamp(4, 64);
+    let cols = (win_w / px).max(1);
+    let rows = (win_h / px).max(1);
+    let x0 = clamp_cam(cam_x, cols, world.width);
+    let y0 = clamp_cam(cam_y, rows, world.height);
+    region(world, x0, y0, cols, rows, px)
+        .save_with_format(path, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())
+}
+
 /// Boîte englobante des cases possédées (+ marge), bornée à la carte.
 pub fn nations_bbox(world: &World, pad: u32) -> Option<(u32, u32, u32, u32)> {
     let (mut minx, mut miny, mut maxx, mut maxy) = (u32::MAX, u32::MAX, 0u32, 0u32);
