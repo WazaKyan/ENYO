@@ -23,7 +23,7 @@ echo.
 echo ============================================================
 echo  Generation d'une partie : 8 nations, 150 mois, Directeur
 echo ============================================================
-"%CARGO%" run --release -q -p harness -- --seed 2026 --nations 8 --turns 150 --director --player 0 --png "out\monde.png" --png-scale 2 --region "out\civilisations.png" --region-scale 14 --tileset "out\tileset.png" --tileset-scale 16 --gif "out\partie.gif"
+"%CARGO%" run --release -q -p harness -- --seed 2026 --nations 8 --turns 150 --director --player 0 --png "out\monde.png" --png-scale 2 --region "out\civilisations.png" --region-scale 14 --tileset "out\tileset.png" --tileset-scale 16 --building-sheet "out\batiments.png" --building-scale 48 --gif "out\partie.gif"
 
 echo.
 echo ============================================================
@@ -32,6 +32,7 @@ echo    - monde.png          (la carte du monde)
 echo    - civilisations.png  (zoom sur les nations : villes, frontieres, guerres)
 echo    - partie.gif         (la partie qui evolue, en anime)
 echo    - tileset.png        (les tuiles pixel-art)
+echo    - batiments.png      (les sprites des batiments + paliers de ville)
 echo  Ouverture...
 echo ============================================================
 start "" "out\partie.gif"

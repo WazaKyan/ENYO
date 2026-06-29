@@ -211,6 +211,12 @@ fn main() {
             Err(e) => eprintln!("échec tileset: {e}"),
         }
     }
+    if let Some(path) = &args.building_sheet {
+        match render::save_building_sheet(args.building_scale, path) {
+            Ok(()) => println!("planche bâtiments écrite: {path}"),
+            Err(e) => eprintln!("échec planche bâtiments: {e}"),
+        }
+    }
 
     print_summary(&world, &actors, args.settle.is_some());
     if args.audit {
@@ -521,6 +527,8 @@ struct Args {
     region_scale: u32,
     tileset: Option<String>,
     tileset_scale: u32,
+    building_sheet: Option<String>,
+    building_scale: u32,
     gif: Option<String>,
     contact: Option<String>,
     frame_every: u32,
@@ -554,6 +562,8 @@ impl Args {
             region_scale: 10,
             tileset: None,
             tileset_scale: 16,
+            building_sheet: None,
+            building_scale: 48,
             gif: None,
             contact: None,
             frame_every: 0,
@@ -623,6 +633,12 @@ impl Args {
                 "--tileset-scale" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
                         a.tileset_scale = v;
+                    }
+                }
+                "--building-sheet" => a.building_sheet = it.next(),
+                "--building-scale" => {
+                    if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                        a.building_scale = v;
                     }
                 }
                 "--gif" => a.gif = it.next(),

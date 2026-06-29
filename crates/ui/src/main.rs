@@ -69,6 +69,28 @@ enum Tool {
     Build(Building),
 }
 
+/// Catégorie de l'interface de jeu : un **sous-menu** qui regroupe ses outils
+/// (épure la barre d'action — on n'affiche que les options de la catégorie ouverte).
+#[derive(PartialEq, Clone, Copy)]
+enum Category {
+    Economy,
+    Military,
+    Diplomacy,
+    Tech,
+}
+
+/// Catégorie d'un outil (pour synchroniser le sous-menu ouvert avec l'outil actif).
+fn category_of(t: Tool) -> Option<Category> {
+    match t {
+        Tool::Found | Tool::Swarm => Some(Category::Economy),
+        Tool::Mobilize | Tool::March => Some(Category::Military),
+        Tool::War | Tool::Peace => Some(Category::Diplomacy),
+        Tool::Build(Building::Military) => Some(Category::Military),
+        Tool::Build(_) => Some(Category::Economy),
+        Tool::None => None,
+    }
+}
+
 #[derive(PartialEq, Clone, Copy)]
 enum Screen {
     Menu,
@@ -104,6 +126,8 @@ enum GameBtn {
     Menu,
     EndTurn,
     Tool(Tool),
+    /// Ouvre un sous-menu (catégorie).
+    Cat(Category),
     Research(u8),
     Speed(u32),
 }
@@ -230,6 +254,7 @@ struct App {
     cam_y: u32,
     px: u32,
     tool: Tool,
+    cat: Category,
     selected: Option<(u32, u32)>,
     pending_src: Option<(u32, u32)>,
     speed: u32,
@@ -335,9 +360,17 @@ fn run_headless(args: &Args) {
             return;
         }
         app.replay_all();
-        if let Some(world) = app.world.as_ref() {
+        // Centre la caméra sur le territoire du joueur et zoome (aperçu utile des
+        // bâtiments/saisons), sinon la capture tombe souvent sur l'océan.
+        let bbox = app.world.as_ref().and_then(|world| {
             println!("rejeu: tour {} checksum {:016x}", world.turn, world.checksum());
+            render::nation_bbox(world, app.player, 3)
+        });
+        if let Some((x0, y0, bw, bh)) = bbox {
+            app.cam_x = x0 + bw / 2;
+            app.cam_y = y0 + bh / 2;
         }
+        app.px = app.px.max(20);
         app.draw_game(wi, hi, -1, -1);
     } else {
         match args.screen.as_str() {
@@ -453,16 +486,12 @@ fn run_audit(args: &Args) {
         a.step(&mut app, &Input::key(Key::Space), &format!("jeu_tour{}", i + 1));
     }
 
-    // Outil Fonder + clic sur la carte.
+    // --- Sous-menu Économie : Fonder + bâtir une industrie + laisser produire. ---
+    let p = center_of(&app.game_buttons(w, h), GameBtn::Cat(Category::Economy));
+    a.step(&mut app, &Input::click_at(p.0, p.1), "menu_economie");
     let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::Found));
     a.step(&mut app, &Input::click_at(p.0, p.1), "outil_fonder");
     a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "fonder_case");
-
-    // Recherche (montre le succès OU le rejet « savoir insuffisant »).
-    let p = center_of(&app.game_buttons(w, h), GameBtn::Research(0));
-    a.step(&mut app, &Input::click_at(p.0, p.1), "recherche_essor");
-
-    // Économie (S8) : bâtir une industrie sur la case centrale + laisser produire.
     let p = center_of(
         &app.game_buttons(w, h),
         GameBtn::Tool(Tool::Build(Building::Industry)),
@@ -471,7 +500,15 @@ fn run_audit(args: &Args) {
     a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "industrie_batie");
     a.step(&mut app, &Input::key(Key::Space), "industrie_apres_tour");
 
-    // Outil militaire : Mobiliser sur la case centrale (du joueur) -> force.
+    // --- Sous-menu Technologie : recherche Essor (succès OU rejet « savoir »). ---
+    let p = center_of(&app.game_buttons(w, h), GameBtn::Cat(Category::Tech));
+    a.step(&mut app, &Input::click_at(p.0, p.1), "menu_technologie");
+    let p = center_of(&app.game_buttons(w, h), GameBtn::Research(0));
+    a.step(&mut app, &Input::click_at(p.0, p.1), "recherche_essor");
+
+    // --- Sous-menu Militaire : Mobiliser sur la case centrale (du joueur). ---
+    let p = center_of(&app.game_buttons(w, h), GameBtn::Cat(Category::Military));
+    a.step(&mut app, &Input::click_at(p.0, p.1), "menu_militaire");
     let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::Mobilize));
     a.step(&mut app, &Input::click_at(p.0, p.1), "outil_mobiliser");
     a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "mobiliser_case");
@@ -524,6 +561,7 @@ impl App {
             cam_y: 250,
             px: args.px,
             tool: Tool::None,
+            cat: Category::Economy,
             selected: None,
             pending_src: None,
             speed: 0,
@@ -618,6 +656,7 @@ impl App {
         self.cam_y = cy;
         self.px = self.config.px;
         self.tool = Tool::None;
+        self.cat = Category::Economy;
         self.selected = None;
         self.pending_src = None;
         self.speed = if spectator { 1 } else { 0 }; // Jouer = départ en pause
@@ -1008,6 +1047,10 @@ impl App {
 
     fn set_tool(&mut self, t: Tool) {
         self.tool = t;
+        // Garde le sous-menu ouvert cohérent avec l'outil choisi (au clavier aussi).
+        if let Some(c) = category_of(t) {
+            self.cat = c;
+        }
         self.pending_src = None;
     }
 
@@ -1041,6 +1084,7 @@ impl App {
                     self.set_tool(t);
                 }
             }
+            GameBtn::Cat(c) => self.cat = c,
             GameBtn::Research(b) => {
                 if !self.replay_mode {
                     self.research(b);
@@ -1231,55 +1275,67 @@ impl App {
         let row3 = h - BOT_H + 80;
         let playing = !self.spectator && !self.replay_mode;
 
-        // Rangée 1 : actions (Inspecter toujours ; le reste seulement en mode Jeu).
-        let actions: &[(&str, Tool)] = if playing {
-            &[
-                ("Inspecter", Tool::None),
-                ("Fonder", Tool::Found),
-                ("Étendre", Tool::Swarm),
-                ("Mobiliser", Tool::Mobilize),
-                ("Marcher", Tool::March),
-                ("Guerre", Tool::War),
-                ("Paix", Tool::Peace),
-            ]
-        } else {
-            &[("Inspecter", Tool::None)]
-        };
+        // Rangée 1 : Inspecter (toujours) + catégories (sous-menus, mode Jeu).
         let mut x = pad;
-        for (lbl, t) in actions {
+        {
+            let lbl = "Inspecter";
             let bw = gui::text_w(lbl, 2) + 18;
-            v.push((GameBtn::Tool(*t), Button::new(x, row1, bw, tbh, *lbl)));
+            v.push((GameBtn::Tool(Tool::None), Button::new(x, row1, bw, tbh, lbl)));
             x += bw + 6;
         }
-
-        // Rangée 2 : bâtir (mode Jeu).
         if playing {
-            let mut x = pad;
-            for (lbl, b) in [
-                ("Ville", Building::City),
-                ("Industrie", Building::Industry),
-                ("Commerce", Building::Commerce),
-                ("Infrastructure", Building::Infrastructure),
-                ("Education", Building::Education),
-                ("Militaire", Building::Military),
-                ("Ferme", Building::Farm),
+            for (lbl, c) in [
+                ("Economie", Category::Economy),
+                ("Militaire", Category::Military),
+                ("Diplomatie", Category::Diplomacy),
+                ("Technologie", Category::Tech),
             ] {
                 let bw = gui::text_w(lbl, 2) + 18;
-                v.push((GameBtn::Tool(Tool::Build(b)), Button::new(x, row2, bw, tbh, lbl)));
+                v.push((GameBtn::Cat(c), Button::new(x, row1, bw, tbh, lbl)));
                 x += bw + 6;
             }
         }
 
-        // Rangée 3 : recherche (mode Jeu) puis vitesse (tous modes).
-        let mut x = pad;
+        // Rangée 2 : sous-options de la catégorie ouverte (mode Jeu).
         if playing {
-            for (i, lbl) in ["Essor", "Terroir", "Fer", "Lien"].iter().enumerate() {
+            let mut x = pad;
+            let push_tool = |v: &mut Vec<(GameBtn, Button)>, x: &mut i32, lbl: &str, t: Tool| {
                 let bw = gui::text_w(lbl, 2) + 18;
-                v.push((GameBtn::Research(i as u8), Button::new(x, row3, bw, tbh, *lbl)));
-                x += bw + 6;
+                v.push((GameBtn::Tool(t), Button::new(*x, row2, bw, tbh, lbl)));
+                *x += bw + 6;
+            };
+            match self.cat {
+                Category::Economy => {
+                    push_tool(&mut v, &mut x, "Fonder", Tool::Found);
+                    push_tool(&mut v, &mut x, "Etendre", Tool::Swarm);
+                    push_tool(&mut v, &mut x, "Ville", Tool::Build(Building::City));
+                    push_tool(&mut v, &mut x, "Industrie", Tool::Build(Building::Industry));
+                    push_tool(&mut v, &mut x, "Commerce", Tool::Build(Building::Commerce));
+                    push_tool(&mut v, &mut x, "Infrastructure", Tool::Build(Building::Infrastructure));
+                    push_tool(&mut v, &mut x, "Ferme", Tool::Build(Building::Farm));
+                    push_tool(&mut v, &mut x, "Education", Tool::Build(Building::Education));
+                }
+                Category::Military => {
+                    push_tool(&mut v, &mut x, "Mobiliser", Tool::Mobilize);
+                    push_tool(&mut v, &mut x, "Marcher", Tool::March);
+                    push_tool(&mut v, &mut x, "Caserne", Tool::Build(Building::Military));
+                }
+                Category::Diplomacy => {
+                    push_tool(&mut v, &mut x, "Guerre", Tool::War);
+                    push_tool(&mut v, &mut x, "Paix", Tool::Peace);
+                }
+                Category::Tech => {
+                    for (i, lbl) in ["Essor", "Terroir", "Fer", "Lien"].iter().enumerate() {
+                        let bw = gui::text_w(lbl, 2) + 18;
+                        v.push((GameBtn::Research(i as u8), Button::new(x, row2, bw, tbh, *lbl)));
+                        x += bw + 6;
+                    }
+                }
             }
-            x += 24;
         }
+
+        // Rangée 3 : vitesse (tous modes).
+        let mut x = pad;
         for (lbl, s) in [("Pause", 0u32), ("x1", 1), ("x2", 2), ("x4", 3), ("Max", 4)] {
             let bw = gui::text_w(lbl, 2) + 16;
             v.push((GameBtn::Speed(s), Button::new(x, row3, bw, tbh, lbl)));
@@ -1418,7 +1474,7 @@ impl App {
             Tool::Build(Building::Commerce) => "Commerce",
             Tool::Build(Building::Infrastructure) => "Infrastructure",
             Tool::Build(Building::Education) => "Education",
-            Tool::Build(Building::Military) => "Militaire",
+            Tool::Build(Building::Military) => "Caserne",
             Tool::Build(Building::Farm) => "Ferme",
         };
         let tech = self
@@ -1478,6 +1534,7 @@ impl App {
                 let active = match id {
                     GameBtn::Tool(t) => *t == self.tool,
                     GameBtn::Speed(s) => *s == self.speed,
+                    GameBtn::Cat(c) => *c == self.cat,
                     _ => false,
                 };
                 b.draw(&mut c, hover, active);
@@ -1574,7 +1631,7 @@ fn building_fr(b: Building) -> &'static str {
         Building::Commerce => "Commerce",
         Building::Infrastructure => "Infrastructure",
         Building::Education => "Education",
-        Building::Military => "Militaire",
+        Building::Military => "Caserne",
         Building::Farm => "Ferme",
     }
 }

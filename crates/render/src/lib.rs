@@ -12,6 +12,12 @@ use sim::World;
 /// Niveau de la mer (doit suivre `worldgen::SEA_LEVEL`).
 const SEA_LEVEL: f32 = 0.5;
 
+/// Saisons : température (°C) sous laquelle le givre apparaît, et l'écart pour une
+/// couverture pleine. La météo fait varier `temperature` chaque mois → la neige
+/// avance et recule (cycle de saison visible, sans toucher la sim).
+const FROST_TEMP: f32 = 2.0;
+const FROST_RANGE: f32 = 16.0;
+
 /// Palette de couleurs distinctes par nation (teinte du territoire).
 const NATION_COLORS: [[u8; 3]; 12] = [
     [206, 74, 74],   // rouge
@@ -217,9 +223,15 @@ pub fn region(world: &World, x0: u32, y0: u32, w: u32, h: u32, px: u32) -> RgbIm
             if let Some(o) = t.owner {
                 draw_borders(&mut img, world, tx, ty, o, (bx, by), px);
             }
-            let urban = t.development.max(t.population / 4000.0);
-            if t.owner.is_some() && urban > 0.3 {
-                draw_marker(&mut img, bx, by, px, [245, 232, 150]);
+            // Bâtiment : sprite pixel-art dessiné APRÈS la teinte de nation (net).
+            // Sinon, marqueur d'urbanisation pour une case peuplée sans bâtiment.
+            if let Some(b) = t.building {
+                draw_building(&mut img, bx, by, px, b, t.population);
+            } else {
+                let urban = t.development.max(t.population / 4000.0);
+                if t.owner.is_some() && urban > 0.3 {
+                    draw_marker(&mut img, bx, by, px, [245, 232, 150]);
+                }
             }
             if t.force > 150.0 {
                 let s = (px / 3).max(1);
@@ -345,24 +357,11 @@ fn draw_tile(img: &mut RgbImage, bx: u32, by: u32, px: u32, t: &Tile) {
         }
         _ => {}
     }
-
-    // Bâtiment (S8) : pastille centrale colorée par vocation, à contour sombre
-    // (bien lisible par-dessus le terrain et la teinte de nation).
-    if let Some(b) = t.building {
-        let col = building_color(b);
-        let m = (px / 2).max(3);
-        let ox = bx + (px - m) / 2;
-        let oy = by + (px - m) / 2;
-        for yy in 0..m {
-            for xx in 0..m {
-                let edge = xx == 0 || yy == 0 || xx == m - 1 || yy == m - 1;
-                put(img, ox + xx, oy + yy, if edge { [16, 16, 20] } else { col });
-            }
-        }
-    }
+    // NB : les bâtiments sont dessinés par `draw_building` APRÈS la teinte de
+    // nation (sinon le sprite serait délavé) — voir `region`.
 }
 
-/// Couleur de la pastille d'un bâtiment (S8).
+/// Couleur d'un bâtiment (repli pastille quand le zoom est trop petit pour un sprite).
 fn building_color(b: Building) -> [u8; 3] {
     match b {
         Building::City => [240, 240, 245],           // blanc (cœur urbain)
@@ -373,6 +372,187 @@ fn building_color(b: Building) -> [u8; 3] {
         Building::Military => [206, 64, 60],          // rouge (armée)
         Building::Farm => [216, 196, 70],             // jaune (récolte)
     }
+}
+
+/// Rectangle en coordonnées **normalisées** (0..1) dans la case [bx,by, px×px].
+#[allow(clippy::too_many_arguments)] // primitive de dessin : coordonnées positionnelles
+fn frect(img: &mut RgbImage, bx: u32, by: u32, px: u32, fx: f32, fy: f32, fw: f32, fh: f32, c: [u8; 3]) {
+    let p = px as f32;
+    let x = bx + (fx * p).max(0.0) as u32;
+    let y = by + (fy * p).max(0.0) as u32;
+    let w = ((fw * p).round() as u32).max(1);
+    let h = ((fh * p).round() as u32).max(1);
+    fill_block(img, x, y, w, h, c);
+}
+
+/// Petit fronton triangulaire (toit) pointant vers le haut, base à `fy`.
+#[allow(clippy::too_many_arguments)] // primitive de dessin : coordonnées positionnelles
+fn tri_roof(img: &mut RgbImage, bx: u32, by: u32, px: u32, fx: f32, fy: f32, fw: f32, c: [u8; 3]) {
+    let p = px as f32;
+    let x0 = bx + (fx * p) as u32;
+    let w = ((fw * p) as u32).max(2);
+    let h = (w / 2).max(1);
+    let base_y = by + (fy * p) as u32;
+    for r in 0..h {
+        let inset = r * w / (2 * h);
+        let y = base_y.saturating_sub(r + 1);
+        fill_block(img, x0 + inset, y, w.saturating_sub(2 * inset).max(1), 1, c);
+    }
+}
+
+/// Dessine le sprite pixel-art d'un bâtiment, centré dans la case. Les **villes**
+/// se densifient avec la population (village → bourg → cité → métropole).
+fn draw_building(img: &mut RgbImage, bx: u32, by: u32, px: u32, b: Building, population: f32) {
+    // Zoom trop petit pour un sprite lisible : pastille pleine (repli).
+    if px < 6 {
+        let col = building_color(b);
+        let m = (px / 2).max(2);
+        fill_block(img, bx + (px - m) / 2, by + (px - m) / 2, m, m, col);
+        return;
+    }
+    match b {
+        Building::City => draw_city(img, bx, by, px, population),
+        Building::Farm => draw_farm(img, bx, by, px),
+        Building::Industry => draw_industry(img, bx, by, px),
+        Building::Commerce => draw_commerce(img, bx, by, px),
+        Building::Infrastructure => draw_infra(img, bx, by, px),
+        Building::Education => draw_school(img, bx, by, px),
+        Building::Military => draw_fort(img, bx, by, px),
+    }
+}
+
+/// Ville : une silhouette de tours dont le nombre et la hauteur croissent avec la
+/// population (paliers village/bourg/cité/métropole).
+fn draw_city(img: &mut RgbImage, bx: u32, by: u32, px: u32, pop: f32) {
+    let tier = if pop >= 3500.0 {
+        3
+    } else if pop >= 2000.0 {
+        2
+    } else if pop >= 800.0 {
+        1
+    } else {
+        0
+    };
+    let body = [234, 234, 242];
+    let dark = [58, 58, 70];
+    let win = [250, 214, 120]; // fenêtres éclairées (chaud)
+    // (x, hauteur) de chaque tour, normalisés.
+    let bars: &[(f32, f32)] = match tier {
+        0 => &[(0.40, 0.30)],
+        1 => &[(0.28, 0.34), (0.52, 0.26)],
+        2 => &[(0.18, 0.34), (0.42, 0.52), (0.64, 0.30)],
+        _ => &[(0.14, 0.40), (0.34, 0.64), (0.54, 0.46), (0.74, 0.34)],
+    };
+    let bw = match tier {
+        0 => 0.22,
+        1 => 0.18,
+        2 => 0.16,
+        _ => 0.14,
+    };
+    for &(fx, fh) in bars {
+        let fy = 0.84 - fh;
+        frect(img, bx, by, px, fx - 0.01, fy - 0.01, bw + 0.02, fh + 0.02, dark);
+        frect(img, bx, by, px, fx, fy, bw, fh, body);
+        if px >= 11 {
+            frect(img, bx, by, px, fx + 0.03, fy + 0.05, (bw - 0.06).max(0.03), 0.05, win);
+        }
+    }
+    frect(img, bx, by, px, 0.12, 0.84, 0.76, 0.06, dark); // sol
+}
+
+/// Ferme : champ de bandes cultivées (récolte dorée / sillon) + une petite grange.
+fn draw_farm(img: &mut RgbImage, bx: u32, by: u32, px: u32) {
+    let crop = [208, 182, 86];
+    let furrow = [118, 146, 62];
+    let rows = 5u32.min((px / 2).max(2));
+    for r in 0..rows {
+        let fy = 0.14 + r as f32 * 0.72 / rows as f32;
+        let c = if r % 2 == 0 { crop } else { furrow };
+        frect(img, bx, by, px, 0.10, fy, 0.80, 0.72 / rows as f32 + 0.01, c);
+    }
+    // Petite grange en haut à droite (laisse le champ dominer).
+    frect(img, bx, by, px, 0.66, 0.16, 0.20, 0.20, [156, 62, 52]); // mur
+    frect(img, bx, by, px, 0.64, 0.11, 0.24, 0.06, [86, 38, 34]); // toit
+}
+
+/// Industrie : usine + cheminée + fumée.
+fn draw_industry(img: &mut RgbImage, bx: u32, by: u32, px: u32) {
+    let wall = [168, 104, 58];
+    let dark = [66, 56, 50];
+    let smoke = [156, 156, 164];
+    frect(img, bx, by, px, 0.18, 0.46, 0.46, 0.40, wall); // corps
+    frect(img, bx, by, px, 0.18, 0.42, 0.46, 0.06, dark); // bandeau de toit
+    frect(img, bx, by, px, 0.60, 0.24, 0.10, 0.62, dark); // cheminée
+    if px >= 10 {
+        frect(img, bx, by, px, 0.58, 0.14, 0.14, 0.10, smoke); // fumée
+        frect(img, bx, by, px, 0.64, 0.06, 0.12, 0.08, smoke);
+    }
+    frect(img, bx, by, px, 0.16, 0.84, 0.58, 0.06, dark); // sol
+}
+
+/// Commerce : échoppe à auvent rayé.
+fn draw_commerce(img: &mut RgbImage, bx: u32, by: u32, px: u32) {
+    let wall = [212, 214, 222];
+    let dark = [58, 64, 84];
+    frect(img, bx, by, px, 0.20, 0.40, 0.60, 0.46, wall); // boutique
+    let n = 4u32;
+    for k in 0..n {
+        let fx = 0.20 + k as f32 * 0.60 / n as f32;
+        let c = if k % 2 == 0 {
+            [70, 140, 210]
+        } else {
+            [236, 236, 240]
+        };
+        frect(img, bx, by, px, fx, 0.36, 0.60 / n as f32, 0.08, c); // auvent rayé
+    }
+    frect(img, bx, by, px, 0.44, 0.60, 0.12, 0.26, dark); // porte
+    frect(img, bx, by, px, 0.18, 0.84, 0.64, 0.05, dark); // sol
+}
+
+/// Infrastructure : carrefour de routes avec ligne médiane pointillée.
+fn draw_infra(img: &mut RgbImage, bx: u32, by: u32, px: u32) {
+    let road = [92, 92, 100];
+    let line = [222, 212, 122];
+    frect(img, bx, by, px, 0.0, 0.40, 1.0, 0.20, road); // route horizontale
+    frect(img, bx, by, px, 0.40, 0.0, 0.20, 1.0, road); // route verticale
+    if px >= 10 {
+        for k in 0..4 {
+            let fx = 0.06 + k as f32 * 0.24;
+            frect(img, bx, by, px, fx, 0.485, 0.10, 0.03, line);
+        }
+    }
+}
+
+/// Éducation : édifice à fronton (école/temple du savoir) + colonnes.
+fn draw_school(img: &mut RgbImage, bx: u32, by: u32, px: u32) {
+    let wall = [210, 202, 228];
+    let roof = [128, 84, 178];
+    let dark = [62, 52, 84];
+    frect(img, bx, by, px, 0.20, 0.44, 0.60, 0.42, wall); // bâtiment
+    tri_roof(img, bx, by, px, 0.14, 0.44, 0.72, roof); // fronton
+    if px >= 10 {
+        frect(img, bx, by, px, 0.28, 0.52, 0.05, 0.28, dark); // colonnes
+        frect(img, bx, by, px, 0.47, 0.52, 0.05, 0.28, dark);
+        frect(img, bx, by, px, 0.66, 0.52, 0.05, 0.28, dark);
+    }
+    frect(img, bx, by, px, 0.18, 0.84, 0.64, 0.05, dark); // sol
+}
+
+/// Militaire : donjon crénelé + drapeau.
+fn draw_fort(img: &mut RgbImage, bx: u32, by: u32, px: u32) {
+    let wall = [182, 86, 74];
+    let dark = [72, 42, 40];
+    let flag = [232, 60, 56];
+    frect(img, bx, by, px, 0.28, 0.36, 0.44, 0.50, wall); // donjon
+    let merlons = 3u32;
+    for k in 0..merlons {
+        let fx = 0.28 + k as f32 * 0.44 / merlons as f32;
+        frect(img, bx, by, px, fx, 0.30, 0.44 / merlons as f32 - 0.03, 0.08, wall); // créneaux
+    }
+    frect(img, bx, by, px, 0.44, 0.62, 0.12, 0.24, dark); // porte
+    frect(img, bx, by, px, 0.49, 0.12, 0.02, 0.22, dark); // mât
+    frect(img, bx, by, px, 0.51, 0.12, 0.14, 0.08, flag); // drapeau
+    frect(img, bx, by, px, 0.20, 0.84, 0.60, 0.05, dark); // sol
 }
 
 /// Pose un pixel (borné à l'image).
@@ -500,6 +680,47 @@ pub fn save_tileset(px: u32, path: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Planche des **bâtiments** (asset visuel) : chaque type dessiné en grand sur un
+/// fond d'herbe, dont les 4 paliers de densité de la ville — pour juger le pixel-art.
+pub fn building_sheet(px: u32) -> RgbImage {
+    let px = px.max(16);
+    let grass = sample(TileKind::Land, Biome::Grassland, 0.6);
+    // (bâtiment, population) — la ville varie pour montrer ses paliers.
+    let items: [(Building, f32); 10] = [
+        (Building::City, 400.0),     // village
+        (Building::City, 1200.0),    // bourg
+        (Building::City, 2500.0),    // cité
+        (Building::City, 4500.0),    // métropole
+        (Building::Farm, 0.0),
+        (Building::Industry, 0.0),
+        (Building::Commerce, 0.0),
+        (Building::Infrastructure, 0.0),
+        (Building::Education, 0.0),
+        (Building::Military, 0.0),
+    ];
+    let cols = 5u32;
+    let gap = 6u32;
+    let rows = (items.len() as u32).div_ceil(cols);
+    let mut img = RgbImage::new(cols * (px + gap) + gap, rows * (px + gap) + gap);
+    for p in img.pixels_mut() {
+        *p = Rgb([18, 18, 22]);
+    }
+    for (i, (b, pop)) in items.iter().enumerate() {
+        let cx = (i as u32 % cols) * (px + gap) + gap;
+        let cy = (i as u32 / cols) * (px + gap) + gap;
+        draw_tile(&mut img, cx, cy, px, &grass);
+        draw_building(&mut img, cx, cy, px, *b, *pop);
+    }
+    img
+}
+
+/// Rend la planche des bâtiments et la sauvegarde en PNG.
+pub fn save_building_sheet(px: u32, path: &str) -> Result<(), String> {
+    building_sheet(px)
+        .save_with_format(path, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())
+}
+
 /// Encode une suite de frames en **GIF animé** (boucle infinie) — pour regarder
 /// la partie évoluer.
 pub fn save_gif(frames: &[RgbImage], path: &str, delay_ms: u32) -> Result<(), String> {
@@ -623,26 +844,36 @@ fn tile_color(t: &Tile) -> [u8; 3] {
     c
 }
 
-/// Couleur de base (biome + relief), sans couche anthropique.
+/// Couleur de base (biome + relief), sans couche anthropique. Inclut le **givre
+/// saisonnier** (neige qui avance/recule avec la température courante).
 fn base_color(t: &Tile) -> [u8; 3] {
-    if t.kind == TileKind::Ocean {
+    let mut c = if t.kind == TileKind::Ocean {
         // Profond → clair selon l'altitude (0 = abysses, 0.5 = côte).
         let shallow = (t.elevation / SEA_LEVEL).clamp(0.0, 1.0);
-        return lerp([20, 40, 80], [52, 108, 164], shallow);
-    }
+        lerp([20, 40, 80], [52, 108, 164], shallow)
+    } else if t.elevation > 0.9 {
+        [234, 238, 242] // neige permanente (sommets)
+    } else if t.elevation > 0.8 {
+        lerp([104, 98, 92], [148, 142, 134], (t.elevation - 0.8) / 0.1) // roche
+    } else {
+        let bc = biome_color(t.biome);
+        // Ombrage solaire léger (évite le délavage).
+        let above = ((t.elevation - SEA_LEVEL) / (1.0 - SEA_LEVEL)).clamp(0.0, 1.0);
+        scale_color(bc, 0.94 + 0.14 * above)
+    };
 
-    // Terre : montagnes au-dessus d'un seuil d'altitude, sinon biome.
-    if t.elevation > 0.9 {
-        return [234, 238, 242]; // neige
+    // Saison : givre/neige selon la température du mois (banquise plus discrète).
+    let frost = ((FROST_TEMP - t.temperature) / FROST_RANGE).clamp(0.0, 1.0);
+    if frost > 0.0 {
+        let snow = if t.kind == TileKind::Ocean {
+            [186, 202, 216]
+        } else {
+            [236, 240, 246]
+        };
+        let strength = if t.kind == TileKind::Ocean { 0.6 } else { 0.85 };
+        c = lerp(c, snow, frost * strength);
     }
-    if t.elevation > 0.8 {
-        return lerp([104, 98, 92], [148, 142, 134], (t.elevation - 0.8) / 0.1); // roche
-    }
-
-    let c = biome_color(t.biome);
-    // Ombrage solaire léger (évite le délavage).
-    let above = ((t.elevation - SEA_LEVEL) / (1.0 - SEA_LEVEL)).clamp(0.0, 1.0);
-    scale_color(c, 0.94 + 0.14 * above)
+    c
 }
 
 /// Palette de biomes (tons terreux/fantasy).

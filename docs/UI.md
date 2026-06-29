@@ -110,6 +110,22 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
 - **Temps réel** (Phase 8) : horloge murale, Pause/×1/×2/×4/Max — voir `docs/REALTIME.md`.
 - **Directeur temps réel** (version intention) + audit cruel + correctifs — voir
   `docs/AUDIT-DIRECTEUR.md`.
+- **Barre d'action en SOUS-MENUS (catégories)** : rangée 1 = `Inspecter` +
+  **Économie / Militaire / Diplomatie / Technologie** ; rangée 2 = les options de la
+  catégorie ouverte (Économie : Fonder/Étendre + bâtiments ; Militaire :
+  Mobiliser/Marcher/Caserne ; Diplomatie : Guerre/Paix ; Technologie : Essor/Terroir/
+  Fer/Lien) ; rangée 3 = vitesse. Épure l'UI ; le clavier ouvre aussi la bonne
+  catégorie. Le bâtiment militaire s'appelle « Caserne » (vs la catégorie Militaire).
+- **Cycle de saison VISIBLE** (rendu pur, sim intouchée) : `render` ajoute un givre/
+  neige saisonnier piloté par la **température courante** de la case → la neige
+  **avance et recule** au fil des mois, en opposition entre hémisphères (banquise
+  plus discrète sur l'océan). Constantes `FROST_TEMP`/`FROST_RANGE`.
+- **Bâtiments en PIXEL-ART** : `render::draw_building` dessine un petit sprite par
+  type (ville, ferme, industrie, commerce, infrastructure, éducation, militaire),
+  dessiné **après** la teinte de nation (net). La **ville se densifie avec la
+  population** (village → bourg → cité → métropole : tours plus nombreuses/hautes).
+  Planche d'aperçu : `harness --building-sheet f.png [--building-scale N]`. Repli
+  pastille quand le zoom est trop petit (px < 6).
 
 ### Reste (D/E)
 - Équilibrage des vitesses croissance/recherche/tech.
