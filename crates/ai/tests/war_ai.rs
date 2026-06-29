@@ -22,6 +22,71 @@ fn land(w: &mut World, x: u32, y: u32) {
 }
 
 #[test]
+fn ai_invades_across_water() {
+    // Deux ÎLES séparées par l'océan : l'IA doit bâtir un port, une galère,
+    // embarquer une unité, traverser et débarquer pour conquérir l'ennemi.
+    let mut w = World::new(61, 16, 10);
+    let width = w.width;
+    let q = |x: u32, y: u32| (y * width + x) as usize;
+    for t in &mut w.tiles {
+        t.kind = TileKind::Ocean;
+        t.precip_now = 0.0;
+        t.ruggedness = 0.0;
+    }
+    for (x, y) in [(2, 4), (2, 5), (3, 4), (3, 5)] {
+        w.tiles[q(x, y)].kind = TileKind::Land;
+    }
+    w.tiles[q(8, 5)].kind = TileKind::Land; // île ennemie (1 case)
+    // Nation 0 : ville + caserne, possède son île, dotée.
+    w.apply(Command::Settle {
+        x: 2,
+        y: 5,
+        nation: 0,
+        population: 3000,
+    });
+    for (x, y) in [(2, 4), (3, 4), (3, 5)] {
+        w.tiles[q(x, y)].owner = Some(0);
+    }
+    let i = q(2, 5);
+    w.tiles[i].building = Some(Building::City);
+    let i = q(3, 5);
+    w.tiles[i].building = Some(Building::Military);
+    let n0 = w.nations.iter().position(|n| n.id == 0).unwrap();
+    w.nations[n0].money = 20000;
+    w.nations[n0].materials = 2000;
+    w.nations[n0].manpower = 2000;
+    w.nations[n0].tech[FER] = 1;
+    // Nation 1 : 1 case.
+    w.apply(Command::Settle {
+        x: 8,
+        y: 5,
+        nation: 1,
+        population: 100,
+    });
+    w.apply(Command::DeclareWar {
+        nation: 0,
+        target: 1,
+    });
+
+    let mut won = false;
+    for _ in 0..300 {
+        for c in plan(&w, 0) {
+            w.apply(c);
+        }
+        w.apply(Command::Step);
+        if w.nation_stats(1).1 == 0 {
+            won = true;
+            break;
+        }
+    }
+    assert!(
+        won,
+        "l'IA doit envahir par la mer et conquérir (restant : {} cases)",
+        w.nation_stats(1).1
+    );
+}
+
+#[test]
 fn ai_wages_and_wins_a_war() {
     let mut w = World::new(1, 40, 8);
     let y = 4;

@@ -62,9 +62,10 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 > y ramenant une unité. **L'IA** sait faire tout cela : elle bâtit une caserne,
 > **déclare la guerre** (grief élevé ou conquête proactive du voisin le plus proche),
 > **recrute** des unités, les **marche** vers l'ennemi (plus court chemin, enroulement
-> X), **attaque** et **occupe** pour le faire capituler. (Limite connue : une unité
-> terrestre ne franchit l'océan que selon sa tech navale, lentement — les invasions
-> maritimes lointaines restent ardues.)
+> X), **attaque** et **occupe** pour le faire capituler. Pour franchir la mer, elle
+> bâtit un **port**, recrute une **galère**, y **embarque** une unité, traverse et la
+> **débarque** sur la côte ennemie (invasion maritime). Le manpower (casernes/ports)
+> sert à recruter ET à régénérer les unités sur le territoire national.
 
 ---
 

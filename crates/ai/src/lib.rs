@@ -238,7 +238,8 @@ fn nearest_rival(world: &World, nation: u16) -> Option<u16> {
 /// vers la cible dans la limite des points de mouvement — pour traverser vite. La
 /// case finale est libre ; le chemin (validé ensuite par `MoveUnit`) peut traverser.
 fn march_toward(world: &World, nation: u16, u: &Unit, tx: u32, ty: u32) -> Option<(u32, u32)> {
-    let naval = world.nation(nation).map(|n| n.tech[LIEN]).unwrap_or(0);
+    let is_naval = unit_stats(u.kind).naval;
+    let naval_tier = world.nation(nation).map(|n| n.tech[LIEN]).unwrap_or(0);
     let (w, h) = (world.width as i64, world.height as i64);
     let (mut cx, mut cy) = (u.x, u.y);
     let mut budget = u.moves_left;
@@ -257,9 +258,13 @@ fn march_toward(world: &World, nation: u16, u: &Unit, tx: u32, ty: u32) -> Optio
                 continue;
             }
             let (nx, ny) = (nx as u32, ny as u32);
-            // L'océan est franchissable selon la tech navale (coût géré par
-            // `unit_move_cost`, qui renvoie MAX si infranchissable).
-            let cost = sim::path::unit_move_cost(world.tile(nx, ny), naval);
+            // Coût selon le domaine : navale = eau (terre infranchissable) ;
+            // terrestre = terre (eau selon la tech navale). MAX = infranchissable.
+            let cost = if is_naval {
+                sim::path::naval_move_cost(world.tile(nx, ny))
+            } else {
+                sim::path::unit_move_cost(world.tile(nx, ny), naval_tier)
+            };
             if cost == u32::MAX || cost > budget {
                 continue;
             }
@@ -340,8 +345,12 @@ fn military(world: &World, nation: u16) -> Vec<Command> {
         }
     }
 
-    // 2) Pour chaque unité : attaquer à portée, sinon avancer vers l'ennemi.
-    for u in world.units.iter().filter(|u| u.owner == nation) {
+    // 2) Unités TERRESTRES : attaquer à portée, sinon avancer vers l'ennemi.
+    for u in world
+        .units
+        .iter()
+        .filter(|u| u.owner == nation && !unit_stats(u.kind).naval)
+    {
         let range = unit_stats(u.kind).range;
         let target = enemy_units
             .iter()
@@ -356,6 +365,15 @@ fn military(world: &World, nation: u16) -> Vec<Command> {
             });
             continue;
         }
+        // Adjacent à une galère chargeable -> rester sur place pour embarquer
+        // (sinon l'unité s'éloignerait vers l'ennemi et raterait le bateau).
+        if let Some((gx, gy)) = nearest_loadable_galley(world, nation, u) {
+            if manhattan(u.x, u.y, gx, gy, width) <= 1 {
+                continue;
+            }
+        }
+        // Avancer vers la case ennemie la plus proche (par terre).
+        let mut moved = false;
         if let Some(&(tx, ty)) = enemy_tiles
             .iter()
             .min_by_key(|&&(tx, ty)| manhattan(u.x, u.y, tx, ty, width))
@@ -366,10 +384,204 @@ fn military(world: &World, nation: u16) -> Vec<Command> {
                     to_x: nx,
                     to_y: ny,
                 });
+                moved = true;
+            }
+        }
+        // Bloqué par la mer ? rejoindre une galère amie avec de la place (pour
+        // embarquer ensuite) — c'est ainsi que l'IA monte une invasion maritime.
+        if !moved {
+            if let Some((gx, gy)) = nearest_loadable_galley(world, nation, u) {
+                if manhattan(u.x, u.y, gx, gy, width) > 1 {
+                    if let Some((nx, ny)) = march_toward(world, nation, u, gx, gy) {
+                        cmds.push(Command::MoveUnit {
+                            unit: u.id,
+                            to_x: nx,
+                            to_y: ny,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 3) NAVAL : port → galère → embarquer une unité → débarquer chez l'ennemi.
+    let has_port = world
+        .tiles
+        .iter()
+        .any(|t| t.owner == Some(nation) && t.building == Some(Building::Port));
+    if !has_port {
+        if let Some((px, py)) = coastal_water_to_build(world, nation) {
+            let (m, mat, hh) = sim::build_cost(Building::Port);
+            if let Some(n) = world.nation(nation) {
+                if n.money >= m && n.materials >= mat && n.housing >= hh {
+                    cmds.push(Command::Build {
+                        x: px,
+                        y: py,
+                        nation,
+                        building: Building::Port,
+                    });
+                }
+            }
+        }
+    }
+    let galleys = world
+        .units
+        .iter()
+        .filter(|u| u.owner == nation && unit_stats(u.kind).naval)
+        .count();
+    if has_port && galleys < 2 {
+        let s = unit_stats(UnitKind::Galley);
+        if world.nation(nation).is_some_and(|n| n.manpower >= s.cost_force && n.money >= s.cost_money)
+        {
+            for (idx, t) in world.tiles.iter().enumerate() {
+                if t.owner == Some(nation) && t.building == Some(Building::Port) {
+                    let (x, y) = coords(idx, width);
+                    if !world.units.iter().any(|u| u.x == x && u.y == y) {
+                        cmds.push(Command::CreateUnit {
+                            x,
+                            y,
+                            nation,
+                            kind: UnitKind::Galley,
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    for g in world
+        .units
+        .iter()
+        .filter(|u| u.owner == nation && unit_stats(u.kind).naval)
+    {
+        let cap = unit_stats(g.kind).capacity as usize;
+        let load = world.cargo.get(&g.id).map_or(0, |v| v.len());
+        // Charger une unité terrestre adjacente (jusqu'à pleine capacité).
+        if load < cap {
+            if let Some(uid) = adjacent_land_unit(world, nation, g.x, g.y) {
+                cmds.push(Command::Embark {
+                    unit: uid,
+                    transport: g.id,
+                });
+                continue;
+            }
+        }
+        if load > 0 {
+            // Débarquer si une terre ennemie est adjacente.
+            if let Some((ex, ey)) = adjacent_enemy_land(world, nation, g.x, g.y) {
+                cmds.push(Command::Disembark {
+                    transport: g.id,
+                    to_x: ex,
+                    to_y: ey,
+                });
+                continue;
+            }
+            // Sinon naviguer vers la côte ennemie la plus proche.
+            if let Some(&(tx, ty)) = enemy_tiles
+                .iter()
+                .min_by_key(|&&(tx, ty)| manhattan(g.x, g.y, tx, ty, width))
+            {
+                if let Some((nx, ny)) = march_toward(world, nation, g, tx, ty) {
+                    cmds.push(Command::MoveUnit {
+                        unit: g.id,
+                        to_x: nx,
+                        to_y: ny,
+                    });
+                }
             }
         }
     }
     cmds
+}
+
+/// Case d'eau côtière (adjacente à une terre possédée), non bâtie, où poser un port.
+fn coastal_water_to_build(world: &World, nation: u16) -> Option<(u32, u32)> {
+    let (w, h) = (world.width as i64, world.height as i64);
+    for (idx, t) in world.tiles.iter().enumerate() {
+        if t.kind != TileKind::Ocean
+            || t.building.is_some()
+            || matches!(t.owner, Some(o) if o != nation)
+        {
+            continue;
+        }
+        let (x, y) = (idx as i64 % w, idx as i64 / w);
+        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+            let nx = (x + dx).rem_euclid(w);
+            let ny = y + dy;
+            if ny < 0 || ny >= h {
+                continue;
+            }
+            let v = (ny * w + nx) as usize;
+            if world.tiles[v].kind == TileKind::Land && world.tiles[v].owner == Some(nation) {
+                return Some(coords(idx, world.width));
+            }
+        }
+    }
+    None
+}
+
+/// Case de TERRE ennemie (en guerre, libre d'unité) adjacente à (x,y) — débarquement.
+fn adjacent_enemy_land(world: &World, nation: u16, x: u32, y: u32) -> Option<(u32, u32)> {
+    let (w, h) = (world.width as i64, world.height as i64);
+    for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+        let nx = (x as i64 + dx).rem_euclid(w);
+        let ny = y as i64 + dy;
+        if ny < 0 || ny >= h {
+            continue;
+        }
+        let (nx, ny) = (nx as u32, ny as u32);
+        let t = world.tile(nx, ny);
+        if t.kind == TileKind::Land
+            && matches!(t.owner, Some(o) if o != nation && world.diplomacy.at_war(nation, o))
+            && !world.units.iter().any(|u| u.x == nx && u.y == ny)
+        {
+            return Some((nx, ny));
+        }
+    }
+    None
+}
+
+/// Position de la galère amie la plus proche AYANT de la place (à rejoindre pour
+/// embarquer).
+fn nearest_loadable_galley(world: &World, nation: u16, u: &Unit) -> Option<(u32, u32)> {
+    let mut best = None;
+    let mut best_d = u32::MAX;
+    for g in &world.units {
+        if g.owner != nation || !unit_stats(g.kind).naval {
+            continue;
+        }
+        let cap = unit_stats(g.kind).capacity as usize;
+        if world.cargo.get(&g.id).map_or(0, |v| v.len()) >= cap {
+            continue;
+        }
+        let d = manhattan(u.x, u.y, g.x, g.y, world.width);
+        if d < best_d {
+            best_d = d;
+            best = Some((g.x, g.y));
+        }
+    }
+    best
+}
+
+/// Id d'une unité TERRESTRE amie adjacente à (x,y) (à embarquer).
+fn adjacent_land_unit(world: &World, nation: u16, x: u32, y: u32) -> Option<u32> {
+    let (w, h) = (world.width as i64, world.height as i64);
+    for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+        let nx = (x as i64 + dx).rem_euclid(w);
+        let ny = y as i64 + dy;
+        if ny < 0 || ny >= h {
+            continue;
+        }
+        let (nx, ny) = (nx as u32, ny as u32);
+        if let Some(u) = world
+            .units
+            .iter()
+            .find(|u| u.x == nx && u.y == ny && u.owner == nation && !unit_stats(u.kind).naval)
+        {
+            return Some(u.id);
+        }
+    }
+    None
 }
 
 /// Capacité minimale d'une case « accueillante » : la ville de départ peut alors
