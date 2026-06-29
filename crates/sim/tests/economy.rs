@@ -2,7 +2,7 @@
 //! d'industrie (matériaux ∝ stats × main-d'œuvre), pollution, et coûts.
 
 use proto::{Building, Command, Event};
-use sim::nation::STARTING_MONEY;
+use sim::nation::{STARTING_INFLUENCE, STARTING_MONEY};
 use sim::tile::TileKind;
 use sim::World;
 
@@ -145,10 +145,14 @@ fn influence_accrues_each_month() {
         nation: 0,
         population: 800,
     });
-    assert_eq!(w.nation(0).unwrap().influence, 0);
+    assert_eq!(w.nation(0).unwrap().influence, STARTING_INFLUENCE);
     w.apply(Command::Step);
     w.apply(Command::Step);
-    assert_eq!(w.nation(0).unwrap().influence, 2, "influence +1/mois");
+    assert_eq!(
+        w.nation(0).unwrap().influence,
+        STARTING_INFLUENCE + 2,
+        "influence +1/mois"
+    );
 }
 
 #[test]
@@ -323,34 +327,20 @@ fn swarm_costs_influence() {
         nation: 0,
         population: 2000,
     });
-    // Sans influence (mois 0) -> essaimage refusé.
+    // L'influence de départ (STARTING_INFLUENCE) permet de s'étendre d'emblée.
+    let infl0 = w.nation(0).unwrap().influence;
+    assert!(infl0 >= sim::SWARM_INFLUENCE, "influence de départ suffisante");
     let ev = w.apply(Command::Swarm {
         from_x: a.0,
         from_y: a.1,
         to_x: b.0,
         to_y: b.1,
     });
-    assert!(
-        matches!(ev[0], Event::CommandRejected { .. }),
-        "essaimage sans influence -> rejet"
-    );
-    // Accumuler l'influence (+1/mois) ; la pop plafonne à la capacité (≥ 1000).
-    for _ in 0..10 {
-        w.apply(Command::Step);
-    }
-    let infl = w.nation(0).unwrap().influence;
-    assert!(infl >= 10, "influence accumulée (got {infl})");
-    assert!(w.tile(a.0, a.1).population >= 1000.0);
-    let ev = w.apply(Command::Swarm {
-        from_x: a.0,
-        from_y: a.1,
-        to_x: b.0,
-        to_y: b.1,
-    });
-    assert!(matches!(ev[0], Event::Swarmed { .. }), "essaimage réussi");
-    assert!(
-        w.nation(0).unwrap().influence < infl,
-        "l'essaimage consomme de l'influence"
+    assert!(matches!(ev[0], Event::Swarmed { .. }), "expansion réussie: {:?}", ev[0]);
+    assert_eq!(
+        w.nation(0).unwrap().influence,
+        infl0 - sim::SWARM_INFLUENCE,
+        "l'expansion consomme de l'influence"
     );
 }
 

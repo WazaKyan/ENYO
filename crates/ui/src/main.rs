@@ -6,10 +6,10 @@
 //! TEMPS RÉEL : le monde avance seul selon la vitesse (Pause / ×1 / ×2 / ×4 /
 //! Max, boutons en bas). L'horloge murale est confinée ici (`RealtimeClock`),
 //! `sim` ne la voit jamais → déterminisme/rejeu intacts (1 tick = 1 mois).
-//! Espace = UN tick manuel (utile en pause). clic = inspecter / agir · F =
-//! Fonder · E = Étendre (2 clics) · V = Ville · M = Mobiliser · B = Marcher (combat
-//! si ennemi) · G = Guerre · P = Paix (clic sur case ennemie) · N = inspecter ·
-//! 1-4 = recherche (mode Jeu) · WASD = bouger · molette = zoom · Échap = menu.
+//! Espace = lecture / pause. clic = inspecter / agir · E = Étendre (2 clics) ·
+//! V = Ville · M = Unités · G = Guerre · P = Paix (clic sur case ennemie) ·
+//! N = inspecter · 1-4 = recherche (mode Jeu) · WASD = bouger · molette = zoom ·
+//! Échap = menu.
 //! En spectateur / rejeu : 0-4 = vitesse au clavier.
 //!
 //! Mode agent : `--headless --shot f.png [--screen menu|settings|game]`
@@ -59,7 +59,6 @@ fn speed_label(speed: u32) -> &'static str {
 #[derive(PartialEq, Clone, Copy)]
 enum Tool {
     None,
-    Found,
     Swarm,
     War,
     Peace,
@@ -84,7 +83,7 @@ enum Category {
 /// Catégorie d'un outil (pour synchroniser le sous-menu ouvert avec l'outil actif).
 fn category_of(t: Tool) -> Option<Category> {
     match t {
-        Tool::Found | Tool::Swarm => Some(Category::Economy),
+        Tool::Swarm => Some(Category::Economy),
         Tool::Create(_) | Tool::Units => Some(Category::Military),
         Tool::War | Tool::Peace => Some(Category::Diplomacy),
         Tool::Build(Building::Military) => Some(Category::Military),
@@ -126,7 +125,6 @@ enum SetBtn {
 #[derive(Clone, Copy, PartialEq)]
 enum GameBtn {
     Menu,
-    EndTurn,
     Tool(Tool),
     /// Ouvre un sous-menu (catégorie).
     Cat(Category),
@@ -152,15 +150,6 @@ impl Input {
             mx,
             my,
             click: true,
-            ..Default::default()
-        }
-    }
-    fn key(k: Key) -> Self {
-        Input {
-            pressed: vec![k],
-            down: vec![k],
-            mx: -1,
-            my: -1,
             ..Default::default()
         }
     }
@@ -262,6 +251,8 @@ struct App {
     selected_unit: Option<u32>,
     pending_src: Option<(u32, u32)>,
     speed: u32,
+    /// Dernière vitesse non nulle (pour reprendre la lecture après une pause).
+    last_speed: u32,
     last_instant: Option<Instant>,
     acc_us: i64,
     last_msg: String,
@@ -485,24 +476,24 @@ fn run_audit(args: &Args) {
     let p = center_of(&app.menu_buttons(w, h), MenuBtn::Play);
     a.step(&mut app, &Input::click_at(p.0, p.1), "jeu_debut");
 
-    // Quelques fins de tour (le monde évolue).
+    // Quelques fins de tour (le monde évolue). Espace bascule désormais la pause :
+    // l'audit avance donc explicitement via `advance()`.
     for i in 0..3 {
-        a.step(&mut app, &Input::key(Key::Space), &format!("jeu_tour{}", i + 1));
+        app.advance();
+        a.snap(&mut app, &format!("jeu_tour{}", i + 1));
     }
 
-    // --- Sous-menu Économie : Fonder + bâtir une industrie + laisser produire. ---
+    // --- Sous-menu Économie : bâtir une industrie + laisser produire. ---
     let p = center_of(&app.game_buttons(w, h), GameBtn::Cat(Category::Economy));
     a.step(&mut app, &Input::click_at(p.0, p.1), "menu_economie");
-    let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::Found));
-    a.step(&mut app, &Input::click_at(p.0, p.1), "outil_fonder");
-    a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "fonder_case");
     let p = center_of(
         &app.game_buttons(w, h),
         GameBtn::Tool(Tool::Build(Building::Industry)),
     );
     a.step(&mut app, &Input::click_at(p.0, p.1), "outil_industrie");
     a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "industrie_batie");
-    a.step(&mut app, &Input::key(Key::Space), "industrie_apres_tour");
+    app.advance();
+    a.snap(&mut app, "industrie_apres_tour");
 
     // --- Sous-menu Technologie : recherche Essor (succès OU rejet « savoir »). ---
     let p = center_of(&app.game_buttons(w, h), GameBtn::Cat(Category::Tech));
@@ -570,6 +561,7 @@ impl App {
             selected_unit: None,
             pending_src: None,
             speed: 0,
+            last_speed: 1,
             last_instant: None,
             acc_us: 0,
             last_msg: String::new(),
@@ -646,7 +638,7 @@ impl App {
             Ok(r) => self.recorder = Some(r),
             Err(e) => eprintln!("enregistrement impossible ({path}): {e}"),
         }
-        let setup = ai::spawn_nations(self.world.as_ref().unwrap(), self.config.nations);
+        let setup = ai::spawn_nations(self.world.as_ref().unwrap(), self.config.nations, self.player);
         for c in setup {
             self.apply(c);
         }
@@ -773,7 +765,7 @@ impl App {
     fn ensure_menu_world(&mut self) {
         if self.menu_world.is_none() {
             let mut world = World::new(self.config.seed, 800, 500);
-            for c in ai::spawn_nations(&world, self.config.nations) {
+            for c in ai::spawn_nations(&world, self.config.nations, self.player) {
                 world.apply(c);
             }
             for _ in 0..40 {
@@ -912,7 +904,6 @@ impl App {
         // (A/W/S/D sont le déplacement → on évite ces lettres pour les outils.)
         if !self.replay_mode {
             for (k, t) in [
-                (Key::F, Tool::Found),
                 (Key::E, Tool::Swarm),
                 (Key::N, Tool::None),
                 (Key::M, Tool::Units),
@@ -943,9 +934,9 @@ impl App {
                 }
             }
         }
-        // Espace = UN tick manuel (utile en pause), jeu comme rejeu.
+        // Espace = lecture / pause (bascule), jeu comme rejeu.
         if input.key_pressed(Key::Space) {
-            self.advance();
+            self.toggle_pause();
         }
         // Touches vitesse : disponibles quand les chiffres ne servent pas a la
         // recherche, c.-a-d. en spectateur et en rejeu (spectator==true).
@@ -959,6 +950,9 @@ impl App {
             ] {
                 if input.key_pressed(k) {
                     self.speed = s;
+                    if s != 0 {
+                        self.last_speed = s;
+                    }
                 }
             }
         }
@@ -1092,6 +1086,7 @@ impl App {
     }
 
     /// Tour suivant : déroule le rejeu si actif, sinon résout un vrai tour.
+    /// (Utilisé par l'audit scripté ; en jeu, Espace bascule la pause.)
     fn advance(&mut self) {
         if self.replay_mode {
             self.replay_step();
@@ -1100,10 +1095,19 @@ impl App {
         }
     }
 
+    /// Espace : bascule lecture/pause. La lecture reprend la dernière vitesse.
+    fn toggle_pause(&mut self) {
+        if self.speed == 0 {
+            self.speed = self.last_speed.max(1);
+        } else {
+            self.last_speed = self.speed;
+            self.speed = 0;
+        }
+    }
+
     fn do_game_btn(&mut self, id: GameBtn) {
         match id {
             GameBtn::Menu => self.screen = Screen::Menu,
-            GameBtn::EndTurn => self.advance(),
             GameBtn::Tool(t) => {
                 if !self.replay_mode {
                     self.set_tool(t);
@@ -1115,7 +1119,12 @@ impl App {
                     self.research(b);
                 }
             }
-            GameBtn::Speed(s) => self.speed = s,
+            GameBtn::Speed(s) => {
+                self.speed = s;
+                if s != 0 {
+                    self.last_speed = s;
+                }
+            }
         }
     }
 
@@ -1140,15 +1149,6 @@ impl App {
         let player = self.player;
         let owner = self.world.as_ref().and_then(|w| w.tile(tx, ty).owner);
         match self.tool {
-            Tool::Found => {
-                let ev = self.apply(Command::Settle {
-                    x: tx,
-                    y: ty,
-                    nation: player,
-                    population: 300,
-                });
-                self.report(&ev);
-            }
             Tool::Swarm => {
                 if let Some((sx, sy)) = self.pending_src.take() {
                     let ev = self.apply(Command::Swarm {
@@ -1313,11 +1313,10 @@ impl App {
         // Haut-droite : Fin de tour, Menu (largeurs ajustées au texte, échelle 2).
         let bh = 28;
         let menu_w = gui::text_w("Menu", 2) + 20;
-        let turn_w = gui::text_w("Fin de tour", 2) + 20;
         let mxn = w - pad - menu_w;
         v.push((GameBtn::Menu, Button::new(mxn, 6, menu_w, bh, "Menu")));
-        let mxt = mxn - pad - turn_w;
-        v.push((GameBtn::EndTurn, Button::new(mxt, 6, turn_w, bh, "Fin de tour")));
+        // (Plus de bouton « Fin de tour » : Espace bascule la pause ; la vitesse
+        // pilote l'écoulement du temps réel.)
 
         // Bas, 3 rangées : actions ; bâtir ; recherche + vitesse.
         let tbh = 28;
@@ -1357,7 +1356,6 @@ impl App {
             };
             match self.cat {
                 Category::Economy => {
-                    push_tool(&mut v, &mut x, "Fonder", Tool::Found);
                     push_tool(&mut v, &mut x, "Etendre", Tool::Swarm);
                     push_tool(&mut v, &mut x, "Ville", Tool::Build(Building::City));
                     push_tool(&mut v, &mut x, "Industrie", Tool::Build(Building::Industry));
@@ -1516,7 +1514,6 @@ impl App {
         let buttons = self.game_buttons(w, h);
         let toolname = match self.tool {
             Tool::None => "Inspecter",
-            Tool::Found => "Fonder",
             Tool::Swarm => "Étendre",
             Tool::War => "Guerre",
             Tool::Peace => "Paix",

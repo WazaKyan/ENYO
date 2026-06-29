@@ -71,7 +71,7 @@ fn main() {
 
     // Acteurs IA : --nations N (bac à sable) OU une nation 0 si --settle + --auto-expand.
     let actors: Vec<u16> = if args.nations > 0 {
-        for cmd in ai::spawn_nations(&world, args.nations) {
+        for cmd in ai::spawn_nations(&world, args.nations, args.player) {
             run_command(&mut world, &mut rec, &mut log, cmd);
         }
         (0..args.nations).collect()

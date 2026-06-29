@@ -169,7 +169,7 @@ const HOSPITABLE_CAP: f32 = 1500.0;
 /// **aléatoirement mais de façon seedée** : même graine ⇒ même placement ⇒ rejeu
 /// identique (contrat de déterminisme). On conserve un espacement minimal, avec
 /// repli (capacité plus basse, puis distance relâchée) si la carte est avare.
-pub fn spawn_nations(world: &World, count: u16) -> Vec<Command> {
+pub fn spawn_nations(world: &World, count: u16, player: u16) -> Vec<Command> {
     let mut out = Vec::new();
     if count == 0 {
         return out;
@@ -224,6 +224,7 @@ pub fn spawn_nations(world: &World, count: u16) -> Vec<Command> {
             }
         }
     }
+    let n = placed.len() as u16;
     for (i, (x, y)) in placed.into_iter().enumerate() {
         let nation = i as u16;
         out.push(Command::Settle {
@@ -239,6 +240,21 @@ pub fn spawn_nations(world: &World, count: u16) -> Vec<Command> {
             y,
             nation,
             building: Building::City,
+        });
+    }
+    // Coup de pouce aux IA (toutes sauf le joueur) : ressources de départ pour
+    // qu'elles se développent vite. Commandes ENREGISTRÉES (rejeu déterministe).
+    for id in 0..n {
+        if id == player {
+            continue;
+        }
+        out.push(Command::Endow {
+            nation: id,
+            money: 3000,
+            materials: 800,
+            influence: 60,
+            housing: 250,
+            food: 600,
         });
     }
     out

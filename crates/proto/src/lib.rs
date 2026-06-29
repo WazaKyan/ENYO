@@ -83,6 +83,16 @@ pub enum Command {
     /// Attaque avec une unité une case à portée contenant une unité ennemie
     /// (combat avec bonus de défense du terrain + malus d'attaque selon le type).
     AttackUnit { unit: u32, x: u32, y: u32 },
+    /// Dote une nation en ressources (genèse : coup de pouce aux IA). Commande
+    /// **enregistrée** → le rejeu reproduit la dotation (déterminisme préservé).
+    Endow {
+        nation: u16,
+        money: i64,
+        materials: i64,
+        influence: i64,
+        housing: i64,
+        food: i64,
+    },
     /// Déclare la guerre à une autre nation.
     DeclareWar { nation: u16, target: u16 },
     /// Fait la paix avec une autre nation.
@@ -175,6 +185,8 @@ pub enum Event {
         tiles: u32,
         score: i64,
     },
+    /// Une nation a été dotée en ressources (genèse).
+    Endowed { nation: u16 },
     /// Une guerre a été déclarée.
     WarDeclared { nation: u16, target: u16 },
     /// La paix a été conclue.

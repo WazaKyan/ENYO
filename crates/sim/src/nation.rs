@@ -17,6 +17,9 @@ pub const STARTING_MONEY: i64 = 500;
 /// Habitation au départ : de quoi **fonder une première ville** (la genèse pose une
 /// ville sur la case d'implantation). Ensuite, l'habitation vient du commerce.
 pub const STARTING_HOUSING: i64 = 60;
+/// Influence au départ : de quoi **s'étendre** quelques fois d'emblée (l'expansion
+/// est le seul moyen d'acquérir du territoire — « Fonder » a été retiré).
+pub const STARTING_INFLUENCE: i64 = 30;
 
 /// Une nation (le joueur est la nation 0).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -50,7 +53,7 @@ impl Nation {
             tech: [0; BRANCHES],
             money: STARTING_MONEY,
             materials: 0,
-            influence: 0,
+            influence: STARTING_INFLUENCE,
             housing: STARTING_HOUSING,
             food: 0,
         }

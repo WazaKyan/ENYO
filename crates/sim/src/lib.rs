@@ -45,8 +45,10 @@ pub const SWARM_INFLUENCE: i64 = 10;
 const INDUSTRY_BASE: f32 = 8.0;
 /// Population connectée pour une main-d'œuvre pleine (au-delà : plafonnée).
 const INDUSTRY_WORKFORCE: f32 = 1000.0;
-/// Dévastation ajoutée chaque mois par une industrie (pollution).
-const INDUSTRY_POLLUTION: f32 = 0.01;
+/// Dévastation ajoutée chaque mois par une industrie (pollution). Faible : une
+/// industrie n'abîme la case que **très lentement** (sur plusieurs décennies),
+/// d'autant que la dévastation se résorbe (cf. heal dans `resolve_anthropic`).
+const INDUSTRY_POLLUTION: f32 = 0.0015;
 /// Matériaux/mois qu'un commerce idéal (main-d'œuvre pleine) transforme.
 const COMMERCE_BASE: f32 = 10.0;
 /// Argent produit par matériau transformé par le commerce.
@@ -229,6 +231,14 @@ impl World {
             } => self.create_unit(x, y, nation, kind),
             Command::MoveUnit { unit, to_x, to_y } => self.move_unit(unit, to_x, to_y),
             Command::AttackUnit { unit, x, y } => self.attack_unit(unit, x, y),
+            Command::Endow {
+                nation,
+                money,
+                materials,
+                influence,
+                housing,
+                food,
+            } => self.endow(nation, money, materials, influence, housing, food),
             Command::DeclareWar { nation, target } => self.declare_war(nation, target),
             Command::MakePeace { nation, target } => self.make_peace(nation, target),
             Command::DirectorGrievance { from, to, amount } => {
@@ -375,6 +385,26 @@ impl World {
             branch,
             tier: new_tier,
         }]
+    }
+
+    /// Dote une nation en ressources (genèse). Additif, jamais négatif.
+    fn endow(
+        &mut self,
+        nation: u16,
+        money: i64,
+        materials: i64,
+        influence: i64,
+        housing: i64,
+        food: i64,
+    ) -> Vec<Event> {
+        let ni = self.ensure_nation(nation);
+        let n = &mut self.nations[ni];
+        n.money += money.max(0);
+        n.materials += materials.max(0);
+        n.influence += influence.max(0);
+        n.housing += housing.max(0);
+        n.food += food.max(0);
+        vec![Event::Endowed { nation }]
     }
 
     /// Déclare la guerre (S6).
@@ -549,7 +579,9 @@ impl World {
                     dynamics::grow_population(t, capacity);
                 }
                 dynamics::grow_development(t, pop, neighbor);
-                t.devastation *= 0.95;
+                // La dévastation se résorbe lentement (1 %/mois) : les cicatrices
+                // (pollution, guerre, famine) persistent et s'accumulent dans le temps.
+                t.devastation *= 0.99;
                 let dev = t.development;
                 let newpop = t.population;
 

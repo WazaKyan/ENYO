@@ -43,7 +43,7 @@ fn plan_expands_grown_nation() {
 #[test]
 fn spawn_places_requested_nations() {
     let w = World::new(7, 200, 140);
-    let settles = spawn_nations(&w, 4)
+    let settles = spawn_nations(&w, 4, 0)
         .iter()
         .filter(|c| matches!(c, Command::Settle { .. }))
         .count();
@@ -55,7 +55,7 @@ fn multi_nation_sandbox_is_deterministic() {
     let run = || {
         let mut w = World::new(9, 120, 90);
         let mut log = vec![w.genesis_event()];
-        for cmd in spawn_nations(&w, 3) {
+        for cmd in spawn_nations(&w, 3, 0) {
             log.extend(w.apply(cmd));
         }
         for _ in 0..25 {
