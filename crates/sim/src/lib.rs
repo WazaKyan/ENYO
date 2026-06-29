@@ -52,6 +52,10 @@ const HOUSING_PER_MAT: i64 = 1;
 const SCIENCE_BASE: f32 = 3.0;
 /// Entretien mensuel (argent) d'une université ; impayé → elle chôme.
 const EDUCATION_UPKEEP: i64 = 3;
+/// Force (soldats) recrutée/mois par une caserne idéale (main-d'œuvre pleine).
+const SOLDIERS_BASE: f32 = 20.0;
+/// Entretien mensuel (argent) d'une caserne ; impayé → pas de recrutement.
+const MILITARY_UPKEEP: i64 = 4;
 
 /// L'état complet de la partie — reconstructible depuis une graine et une suite
 /// de commandes (donc rejouable).
@@ -698,7 +702,16 @@ impl World {
                         let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
                         science_gain[ni] += SCIENCE_BASE * workforce;
                     }
-                    // Infrastructure connecte (aucun produit) ; Militaire = E4.
+                    // Caserne : recrute des soldats (force) sur la case, depuis la
+                    // population connectée, contre un entretien mensuel ; sinon rien.
+                    Building::Military
+                        if cpop > 0.0 && self.nations[ni].money >= MILITARY_UPKEEP =>
+                    {
+                        self.nations[ni].money -= MILITARY_UPKEEP;
+                        let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
+                        self.tiles[idx].force += SOLDIERS_BASE * workforce;
+                    }
+                    // Infrastructure connecte (aucun produit) ; bâtiments à l'arrêt.
                     _ => {}
                 }
             }
@@ -722,11 +735,6 @@ impl World {
         }
         if self.tiles[idx].kind != TileKind::Land {
             return reject("pas une terre"); // défense en profondeur (cf. settle/swarm)
-        }
-        // Fail-closed : ne pas facturer un bâtiment dont la production n'existe pas
-        // encore (Militaire = E4). Évite de brûler des ressources.
-        if matches!(building, Building::Military) {
-            return reject("bâtiment pas encore disponible");
         }
         if self.tiles[idx].building.is_some() {
             return reject("case déjà bâtie");

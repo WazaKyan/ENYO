@@ -147,7 +147,7 @@ impl Input {
 }
 
 /// Touches surveillées chaque frame (pour bâtir l'Input depuis la fenêtre).
-const WATCH: [Key; 26] = [
+const WATCH: [Key; 27] = [
     Key::A,
     Key::D,
     Key::W,
@@ -168,6 +168,7 @@ const WATCH: [Key; 26] = [
     Key::C,
     Key::R,
     Key::U,
+    Key::K,
     Key::Space,
     Key::Key0,
     Key::Key1,
@@ -858,6 +859,7 @@ impl App {
                 (Key::C, Tool::Build(Building::Commerce)),
                 (Key::R, Tool::Build(Building::Infrastructure)),
                 (Key::U, Tool::Build(Building::Education)),
+                (Key::K, Tool::Build(Building::Military)),
             ] {
                 if input.key_pressed(k) {
                     self.set_tool(t);
@@ -1253,6 +1255,7 @@ impl App {
                 ("Commerce", Building::Commerce),
                 ("Infrastructure", Building::Infrastructure),
                 ("Education", Building::Education),
+                ("Militaire", Building::Military),
             ] {
                 let bw = gui::text_w(lbl, 2) + 18;
                 v.push((GameBtn::Tool(Tool::Build(b)), Button::new(x, row2, bw, tbh, lbl)));

@@ -251,6 +251,57 @@ fn education_makes_science_only_with_commerce() {
 }
 
 #[test]
+fn military_recruits_soldiers_for_upkeep() {
+    let mut w = World::new(15, 80, 60);
+    let [a, b, _] = three_land_in_row(&w);
+    w.apply(Command::Settle {
+        x: a.0,
+        y: a.1,
+        nation: 0,
+        population: 1500,
+    });
+    w.apply(Command::Settle {
+        x: b.0,
+        y: b.1,
+        nation: 0,
+        population: 1500,
+    });
+    // Industrie sur B pour les matériaux de la caserne (40).
+    w.apply(Command::Build {
+        x: b.0,
+        y: b.1,
+        nation: 0,
+        building: Building::Industry,
+    });
+    for _ in 0..40 {
+        w.apply(Command::Step);
+    }
+    // Caserne sur A (120 argent + 40 matériaux).
+    let ev = w.apply(Command::Build {
+        x: a.0,
+        y: a.1,
+        nation: 0,
+        building: Building::Military,
+    });
+    assert!(matches!(ev[0], Event::Built { .. }), "caserne bâtie");
+    let f0 = w.tile(a.0, a.1).force;
+    let m0 = w.nation(0).unwrap().money;
+    for _ in 0..5 {
+        w.apply(Command::Step);
+    }
+    assert!(
+        w.tile(a.0, a.1).force > f0,
+        "la caserne recrute des soldats ({} -> {})",
+        f0,
+        w.tile(a.0, a.1).force
+    );
+    assert!(
+        w.nation(0).unwrap().money < m0,
+        "la caserne coûte un entretien mensuel"
+    );
+}
+
+#[test]
 fn build_rejected_when_unaffordable_or_invalid() {
     let mut w = World::new(7, 80, 60);
     let (x, y) = productive(&w);
