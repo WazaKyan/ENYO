@@ -1210,39 +1210,66 @@ impl App {
                 self.report(&ev);
             }
             Tool::Units => {
-                // Unité présente sur la case cliquée (id, propriétaire) ?
-                let hit = self.world.as_ref().and_then(|w| {
-                    w.units
+                // Infos (unité cliquée, unité sélectionnée, terrain) lues d'un coup.
+                let info = self.world.as_ref().map(|w| {
+                    let hit = w
+                        .units
                         .iter()
                         .find(|u| u.x == tx && u.y == ty)
-                        .map(|u| (u.id, u.owner))
+                        .map(|u| (u.id, u.owner, u.kind));
+                    let sel = self
+                        .selected_unit
+                        .and_then(|id| w.units.iter().find(|u| u.id == id).map(|u| (id, u.kind)));
+                    let is_land = w.tile(tx, ty).kind == sim::tile::TileKind::Land;
+                    (hit, sel, is_land)
                 });
-                match (self.selected_unit, hit) {
-                    // Sélection d'une de ses unités.
-                    (_, Some((id, o))) if o == player => {
-                        self.selected_unit = Some(id);
-                        self.last_msg = format!("unite {id} selectionnee - clique ou aller / qui attaquer");
-                    }
-                    // Unité sélectionnée + clic sur une case ennemie occupee -> attaque.
-                    (Some(sel), Some(_)) => {
-                        let ev = self.apply(Command::AttackUnit {
-                            unit: sel,
-                            x: tx,
-                            y: ty,
-                        });
-                        self.report(&ev);
-                    }
-                    // Unité sélectionnée + case vide -> déplacement.
-                    (Some(sel), None) => {
-                        let ev = self.apply(Command::MoveUnit {
-                            unit: sel,
-                            to_x: tx,
-                            to_y: ty,
-                        });
-                        self.report(&ev);
-                    }
-                    (None, _) => {
-                        self.last_msg = "clique une de tes unites".to_string();
+                if let Some((hit, sel, is_land)) = info {
+                    match (sel, hit) {
+                        // Embarquer : unité terrestre sélectionnée, clic sur SA galère.
+                        (Some((selid, selk)), Some((gid, go, UnitKind::Galley)))
+                            if go == player && !sim::unit::unit_stats(selk).naval =>
+                        {
+                            let ev = self.apply(Command::Embark {
+                                unit: selid,
+                                transport: gid,
+                            });
+                            self.report(&ev);
+                        }
+                        // Sélectionner une de ses unités.
+                        (_, Some((id, o, _))) if o == player => {
+                            self.selected_unit = Some(id);
+                            self.last_msg = format!("unite {id} selectionnee");
+                        }
+                        // Attaquer une unité ennemie.
+                        (Some((selid, _)), Some(_)) => {
+                            let ev = self.apply(Command::AttackUnit {
+                                unit: selid,
+                                x: tx,
+                                y: ty,
+                            });
+                            self.report(&ev);
+                        }
+                        // Galère sélectionnée + clic terre côtière vide -> débarquer.
+                        (Some((selid, UnitKind::Galley)), None) if is_land => {
+                            let ev = self.apply(Command::Disembark {
+                                transport: selid,
+                                to_x: tx,
+                                to_y: ty,
+                            });
+                            self.report(&ev);
+                        }
+                        // Sinon : déplacer.
+                        (Some((selid, _)), None) => {
+                            let ev = self.apply(Command::MoveUnit {
+                                unit: selid,
+                                to_x: tx,
+                                to_y: ty,
+                            });
+                            self.report(&ev);
+                        }
+                        (None, _) => {
+                            self.last_msg = "clique une de tes unites".to_string();
+                        }
                     }
                 }
                 // L'unité sélectionnée a pu mourir (riposte) -> désélectionner.
@@ -1377,6 +1404,7 @@ impl App {
                     push_tool(&mut v, &mut x, "Infanterie", Tool::Create(UnitKind::Infantry));
                     push_tool(&mut v, &mut x, "Archers", Tool::Create(UnitKind::Archer));
                     push_tool(&mut v, &mut x, "Cavalerie", Tool::Create(UnitKind::Cavalry));
+                    push_tool(&mut v, &mut x, "Galere", Tool::Create(UnitKind::Galley));
                     push_tool(&mut v, &mut x, "Caserne", Tool::Build(Building::Military));
                     push_tool(&mut v, &mut x, "Port", Tool::Build(Building::Port));
                 }
@@ -1538,6 +1566,7 @@ impl App {
             Tool::Create(UnitKind::Infantry) => "Infanterie",
             Tool::Create(UnitKind::Archer) => "Archers",
             Tool::Create(UnitKind::Cavalry) => "Cavalerie",
+            Tool::Create(UnitKind::Galley) => "Galere",
             Tool::Units => "Unites",
         };
         let tech = self
@@ -1756,6 +1785,7 @@ fn unit_fr(k: UnitKind) -> &'static str {
         UnitKind::Infantry => "Infanterie",
         UnitKind::Archer => "Archers",
         UnitKind::Cavalry => "Cavalerie",
+        UnitKind::Galley => "Galere",
     }
 }
 
@@ -1779,6 +1809,7 @@ fn unit_role(k: UnitKind) -> &'static str {
         UnitKind::Infantry => "Robuste, corps a corps. Aucun malus de terrain.",
         UnitKind::Archer => "Distance (portee 2), fragile. Malus en foret.",
         UnitKind::Cavalry => "Rapide et puissante. Malus en terrain accidente.",
+        UnitKind::Galley => "Navale (port) : se deplace sur l'eau, transporte 2 unites.",
     }
 }
 
@@ -1924,6 +1955,10 @@ fn feedback(events: &[Event]) -> Option<String> {
             }
             Event::UnitDestroyed { x, y, .. } => {
                 return Some(format!("unite detruite ({x},{y})"))
+            }
+            Event::Embarked { .. } => return Some("embarque sur la galere".to_string()),
+            Event::Disembarked { kind, x, y, .. } => {
+                return Some(format!("debarque {} ({x},{y})", unit_fr(*kind)))
             }
             Event::Capitulation {
                 winner,

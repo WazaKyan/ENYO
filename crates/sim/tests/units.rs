@@ -321,6 +321,88 @@ fn unit_regenerates_on_home_territory_only() {
 }
 
 #[test]
+fn naval_transport_carries_a_unit_across_water() {
+    let mut w = World::new(51, 40, 12);
+    let y = 5u32;
+    let width = w.width;
+    let pp = |x: u32| (y * width + x) as usize;
+    // (3) terre côtière ; (4)(5) océan ; (6) terre (débarquement).
+    w.tiles[pp(3)].kind = TileKind::Land;
+    for x in 4..6 {
+        let i = pp(x);
+        w.tiles[i].kind = TileKind::Ocean;
+        w.tiles[i].precip_now = 0.0; // coût naval = 10/case
+    }
+    w.tiles[pp(6)].kind = TileKind::Land;
+    // Nation 0 possède (3) ; caserne + ressources.
+    w.apply(Command::Settle {
+        x: 3,
+        y,
+        nation: 0,
+        population: 100,
+    });
+    let i = pp(3);
+    w.tiles[i].building = Some(Building::Military);
+    let ni = w.nations.iter().position(|n| n.id == 0).unwrap();
+    w.nations[ni].money = 5000;
+    w.nations[ni].materials = 500;
+    w.nations[ni].manpower = 1000;
+    // Port sur (4) (océan côtier).
+    let ev = w.apply(Command::Build {
+        x: 4,
+        y,
+        nation: 0,
+        building: Building::Port,
+    });
+    assert!(matches!(ev[0], Event::Built { .. }), "port: {:?}", ev[0]);
+    // Une infanterie (caserne) + une galère (port).
+    w.apply(Command::CreateUnit {
+        x: 3,
+        y,
+        nation: 0,
+        kind: UnitKind::Infantry,
+    });
+    w.apply(Command::CreateUnit {
+        x: 4,
+        y,
+        nation: 0,
+        kind: UnitKind::Galley,
+    });
+    let inf = w.units.iter().find(|u| u.kind == UnitKind::Infantry).unwrap().id;
+    let gal = w.units.iter().find(|u| u.kind == UnitKind::Galley).unwrap().id;
+    // Embarquer (cases adjacentes (3) et (4)).
+    let ev = w.apply(Command::Embark {
+        unit: inf,
+        transport: gal,
+    });
+    assert!(matches!(ev[0], Event::Embarked { .. }), "embarque: {:?}", ev[0]);
+    assert!(w.units.iter().all(|u| u.id != inf), "l'infanterie quitte la carte");
+    assert_eq!(w.cargo.get(&gal).map(|v| v.len()), Some(1), "cargo +1");
+    // Recharge des points, puis navigation (4)->(5) sur l'eau.
+    w.apply(Command::Step);
+    let ev = w.apply(Command::MoveUnit {
+        unit: gal,
+        to_x: 5,
+        to_y: y,
+    });
+    assert!(matches!(ev[0], Event::UnitMoved { .. }), "navigue: {:?}", ev[0]);
+    // Débarquer sur la terre (6), adjacente à la galère.
+    let ev = w.apply(Command::Disembark {
+        transport: gal,
+        to_x: 6,
+        to_y: y,
+    });
+    assert!(matches!(ev[0], Event::Disembarked { .. }), "debarque: {:?}", ev[0]);
+    assert!(
+        w.units
+            .iter()
+            .any(|u| u.x == 6 && u.y == y && u.kind == UnitKind::Infantry),
+        "infanterie débarquée sur la terre"
+    );
+    assert!(!w.cargo.contains_key(&gal), "cargo vidé -> entrée retirée");
+}
+
+#[test]
 fn units_are_deterministic() {
     let run = || {
         let mut w = World::new(9, 50, 40);

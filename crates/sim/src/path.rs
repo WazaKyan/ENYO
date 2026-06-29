@@ -106,6 +106,15 @@ pub fn reach_cost_with<F: Fn(&Tile) -> u32>(
     None
 }
 
+/// Coût d'entrée pour une **unité navale** (galère) : l'eau est rapide, la terre
+/// infranchissable (les navires restent en mer). Les intempéries ralentissent.
+pub fn naval_move_cost(tile: &Tile) -> u32 {
+    match tile.kind {
+        TileKind::Ocean => 10 + (tile.precip_now * 12.0) as u32,
+        TileKind::Land => u32::MAX,
+    }
+}
+
 /// Coût d'atteignabilité avec le coût de terrain standard (essaimage, S2).
 pub fn reach_cost(
     tiles: &[Tile],

@@ -44,6 +44,17 @@ pub struct UnitStats {
     pub forest_attack_malus: i32,
     /// Malus d'attaque (%) si l'unité attaque depuis une case très **accidentée**.
     pub rough_attack_malus: i32,
+    /// Unité **navale** (se déplace sur l'eau, recrutée au port).
+    pub naval: bool,
+    /// Capacité de transport (nombre d'unités terrestres embarquables ; 0 = aucune).
+    pub capacity: u8,
+}
+
+/// Unité **transportée** à bord d'une galère (cargo) : son type et ses PV.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CarriedUnit {
+    pub kind: UnitKind,
+    pub hp: i32,
 }
 
 /// Table des stats par type (figée — à régler par golden). **Single-source.**
@@ -60,6 +71,8 @@ pub fn unit_stats(kind: UnitKind) -> UnitStats {
             tech_fer: 0,
             forest_attack_malus: 0,
             rough_attack_malus: 0,
+            naval: false,
+            capacity: 0,
         },
         // Distance (portée 2), fragile. Mauvaise en forêt (visée gênée).
         UnitKind::Archer => UnitStats {
@@ -72,6 +85,8 @@ pub fn unit_stats(kind: UnitKind) -> UnitStats {
             tech_fer: 1,
             forest_attack_malus: 40,
             rough_attack_malus: 0,
+            naval: false,
+            capacity: 0,
         },
         // Rapide et puissante, mais a besoin de terrain ouvert.
         UnitKind::Cavalry => UnitStats {
@@ -84,6 +99,22 @@ pub fn unit_stats(kind: UnitKind) -> UnitStats {
             tech_fer: 2,
             forest_attack_malus: 30,
             rough_attack_malus: 35,
+            naval: false,
+            capacity: 0,
+        },
+        // Galère : navale, rapide sur l'eau, transporte 2 unités terrestres.
+        UnitKind::Galley => UnitStats {
+            max_hp: 80,
+            damage: 20,
+            range: 1,
+            moves: 60,
+            cost_money: 100,
+            cost_force: 30,
+            tech_fer: 0,
+            forest_attack_malus: 0,
+            rough_attack_malus: 0,
+            naval: true,
+            capacity: 2,
         },
     }
 }
@@ -94,5 +125,6 @@ pub fn kind_code(kind: UnitKind) -> u64 {
         UnitKind::Infantry => 1,
         UnitKind::Archer => 2,
         UnitKind::Cavalry => 3,
+        UnitKind::Galley => 4,
     }
 }

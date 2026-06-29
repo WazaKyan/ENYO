@@ -19,7 +19,7 @@ pub mod tile;
 pub mod unit;
 pub mod worldgen;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use diplo::Diplomacy;
 use nation::Nation;
@@ -27,7 +27,7 @@ use proto::{Building, Command, Event, UnitKind};
 use rng::Rng;
 use serde::{Deserialize, Serialize};
 use tile::{Tile, TileKind};
-use unit::Unit;
+use unit::{CarriedUnit, Unit};
 
 /// Constante FNV-1a (prime 64 bits) pour le checksum d'audit.
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -127,6 +127,10 @@ pub struct World {
     /// Prochain id d'unité (monotone → ids stables, rejouables).
     #[serde(default)]
     next_unit_id: u32,
+    /// Cargo des galères (id de la galère → unités transportées). BTreeMap pour un
+    /// ordre déterministe (checksum).
+    #[serde(default)]
+    pub cargo: BTreeMap<u32, Vec<CarriedUnit>>,
 }
 
 impl World {
@@ -146,6 +150,7 @@ impl World {
             tiles: gen.tiles,
             units: Vec::new(),
             next_unit_id: 1,
+            cargo: BTreeMap::new(),
         }
     }
 
@@ -235,6 +240,12 @@ impl World {
             } => self.create_unit(x, y, nation, kind),
             Command::MoveUnit { unit, to_x, to_y } => self.move_unit(unit, to_x, to_y),
             Command::AttackUnit { unit, x, y } => self.attack_unit(unit, x, y),
+            Command::Embark { unit, transport } => self.embark(unit, transport),
+            Command::Disembark {
+                transport,
+                to_x,
+                to_y,
+            } => self.disembark(transport, to_x, to_y),
             Command::Endow {
                 nation,
                 money,
@@ -1031,13 +1042,23 @@ impl World {
         if self.tiles[idx].owner != Some(nation) {
             return reject("case non possédée");
         }
-        if self.tiles[idx].building != Some(Building::Military) {
-            return reject("pas de caserne sur la case");
+        let stats = unit::unit_stats(kind);
+        // Unité navale -> port ; unité terrestre -> caserne.
+        let needed = if stats.naval {
+            Building::Port
+        } else {
+            Building::Military
+        };
+        if self.tiles[idx].building != Some(needed) {
+            return reject(if stats.naval {
+                "pas de port sur la case"
+            } else {
+                "pas de caserne sur la case"
+            });
         }
         if self.unit_occupied(x, y) {
             return reject("case déjà occupée par une unité");
         }
-        let stats = unit::unit_stats(kind);
         let ni = self.ensure_nation(nation);
         if self.nations[ni].tech[nation::FER] < stats.tech_fer {
             return reject("technologie (Fer) insuffisante pour ce type");
@@ -1079,9 +1100,9 @@ impl World {
         let Some(ui) = self.unit_index_by_id(unit_id) else {
             return reject("unité inconnue");
         };
-        let (fx, fy, owner, moves_left) = {
+        let (fx, fy, owner, kind, moves_left) = {
             let u = &self.units[ui];
-            (u.x, u.y, u.owner, u.moves_left)
+            (u.x, u.y, u.owner, u.kind, u.moves_left)
         };
         if (tx, ty) == (fx, fy) {
             return reject("déjà sur place");
@@ -1091,10 +1112,24 @@ impl World {
         }
         let from = self.index(fx, fy);
         let to = self.index(tx, ty);
-        let naval = self.nation(owner).map(|n| n.tech[nation::LIEN]).unwrap_or(0);
-        let cost = path::reach_cost_with(&self.tiles, self.width, self.height, from, to, moves_left, |t| {
-            path::unit_move_cost(t, naval)
-        });
+        // Coût de déplacement selon le DOMAINE de l'unité : navale = eau (terre
+        // infranchissable) ; terrestre = terre (eau selon la tech navale).
+        let cost = if unit::unit_stats(kind).naval {
+            path::reach_cost_with(
+                &self.tiles,
+                self.width,
+                self.height,
+                from,
+                to,
+                moves_left,
+                path::naval_move_cost,
+            )
+        } else {
+            let naval = self.nation(owner).map(|n| n.tech[nation::LIEN]).unwrap_or(0);
+            path::reach_cost_with(&self.tiles, self.width, self.height, from, to, moves_left, |t| {
+                path::unit_move_cost(t, naval)
+            })
+        };
         match cost {
             Some(c) => {
                 {
@@ -1114,6 +1149,104 @@ impl World {
             }
             None => reject("hors de portée (points de mouvement)"),
         }
+    }
+
+    /// Embarque une unité terrestre `unit` sur une **galère** `transport` adjacente.
+    fn embark(&mut self, unit_id: u32, transport_id: u32) -> Vec<Event> {
+        let Some(ti) = self.unit_index_by_id(transport_id) else {
+            return reject("galère inconnue");
+        };
+        let (gx, gy, gowner, gkind) = {
+            let g = &self.units[ti];
+            (g.x, g.y, g.owner, g.kind)
+        };
+        let cap = unit::unit_stats(gkind).capacity;
+        if cap == 0 {
+            return reject("ce n'est pas un transport");
+        }
+        let Some(li) = self.unit_index_by_id(unit_id) else {
+            return reject("unité inconnue");
+        };
+        let (lx, ly, lowner, lkind, lhp) = {
+            let u = &self.units[li];
+            (u.x, u.y, u.owner, u.kind, u.hp)
+        };
+        if lowner != gowner {
+            return reject("unité d'une autre nation");
+        }
+        if unit::unit_stats(lkind).naval {
+            return reject("une unité navale ne s'embarque pas");
+        }
+        if self.manhattan(lx, ly, gx, gy) > 1 {
+            return reject("la galère n'est pas adjacente");
+        }
+        if self.cargo.get(&transport_id).map_or(0, |v| v.len()) as u8 >= cap {
+            return reject("galère pleine");
+        }
+        self.cargo
+            .entry(transport_id)
+            .or_default()
+            .push(CarriedUnit { kind: lkind, hp: lhp });
+        self.units.retain(|u| u.id != unit_id); // l'unité quitte la carte
+        vec![Event::Embarked {
+            unit: unit_id,
+            transport: transport_id,
+        }]
+    }
+
+    /// Débarque une unité transportée sur une case de **terre** adjacente (libre).
+    fn disembark(&mut self, transport_id: u32, tx: u32, ty: u32) -> Vec<Event> {
+        if tx >= self.width || ty >= self.height {
+            return reject("hors carte");
+        }
+        let Some(ti) = self.unit_index_by_id(transport_id) else {
+            return reject("galère inconnue");
+        };
+        let (gx, gy, owner) = {
+            let g = &self.units[ti];
+            (g.x, g.y, g.owner)
+        };
+        if self.tiles[self.index(tx, ty)].kind != TileKind::Land {
+            return reject("on débarque sur la terre");
+        }
+        if self.manhattan(gx, gy, tx, ty) != 1 {
+            return reject("case non adjacente à la galère");
+        }
+        if self.unit_occupied(tx, ty) {
+            return reject("case occupée par une unité");
+        }
+        let (carried, now_empty) = {
+            let Some(load) = self.cargo.get_mut(&transport_id) else {
+                return reject("galère vide");
+            };
+            match load.pop() {
+                Some(c) => (c, load.is_empty()),
+                None => return reject("galère vide"),
+            }
+        };
+        if now_empty {
+            self.cargo.remove(&transport_id);
+        }
+        let stats = unit::unit_stats(carried.kind);
+        let id = self.next_unit_id;
+        self.next_unit_id += 1;
+        self.units.push(Unit {
+            id,
+            owner,
+            kind: carried.kind,
+            x: tx,
+            y: ty,
+            hp: carried.hp.min(stats.max_hp),
+            moves_left: 0,
+        });
+        let to = self.index(tx, ty);
+        self.update_occupation(to, owner); // débarquer sur une terre ennemie l'occupe
+        vec![Event::Disembarked {
+            transport: transport_id,
+            kind: carried.kind,
+            x: tx,
+            y: ty,
+        }]
     }
 
     /// Attaque avec une unité une case à portée contenant une unité ENNEMIE (guerre
@@ -1178,6 +1311,7 @@ impl World {
         }];
         if killed {
             self.units.retain(|u| u.id != defender_id);
+            self.cargo.remove(&defender_id); // une galère coulée perd son cargo
             events.push(Event::UnitDestroyed {
                 unit: defender_id,
                 x: tx,
@@ -1189,6 +1323,7 @@ impl World {
             if self.units[ai2].hp <= 0 {
                 let (ux, uy) = (self.units[ai2].x, self.units[ai2].y);
                 self.units.retain(|u| u.id != unit_id);
+                self.cargo.remove(&unit_id);
                 events.push(Event::UnitDestroyed {
                     unit: unit_id,
                     x: ux,
@@ -1266,6 +1401,15 @@ impl World {
             fnv_u32(&mut h, u.y);
             fnv_u32(&mut h, u.hp as u32);
             fnv_u32(&mut h, u.moves_left);
+        }
+        // Cargo des galères (BTreeMap → ordre des clés, déterministe).
+        for (gid, load) in &self.cargo {
+            fnv_u32(&mut h, *gid);
+            for c in load {
+                h ^= unit::kind_code(c.kind);
+                fnv_u32(&mut h, c.hp as u32);
+                h = h.wrapping_mul(FNV_PRIME);
+            }
         }
         for &(a, b) in self.diplomacy.wars() {
             fnv_u32(&mut h, a as u32);

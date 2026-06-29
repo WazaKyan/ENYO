@@ -41,6 +41,9 @@ pub enum UnitKind {
     Archer,
     /// Cavalerie : rapide et puissante, **malus en terrain accidenté/forêt**.
     Cavalry,
+    /// Galère : unité **navale** (recrutée au port) — se déplace sur l'eau et
+    /// **transporte** des unités terrestres (embarquement / débarquement).
+    Galley,
 }
 
 /// Une action demandée à la simulation.
@@ -89,6 +92,12 @@ pub enum Command {
     /// Attaque avec une unité une case à portée contenant une unité ennemie
     /// (combat avec bonus de défense du terrain + malus d'attaque selon le type).
     AttackUnit { unit: u32, x: u32, y: u32 },
+    /// Embarque une unité terrestre `unit` à bord d'une **galère** `transport`
+    /// adjacente (transport naval) — l'unité quitte la carte et devient cargo.
+    Embark { unit: u32, transport: u32 },
+    /// Débarque une unité transportée par la galère `transport` sur une case de
+    /// **terre** côtière adjacente (elle réapparaît et peut occuper).
+    Disembark { transport: u32, to_x: u32, to_y: u32 },
     /// Dote une nation en ressources (genèse : coup de pouce aux IA). Commande
     /// **enregistrée** → le rejeu reproduit la dotation (déterminisme préservé).
     Endow {
@@ -190,6 +199,15 @@ pub enum Event {
     },
     /// Une unité a été détruite (PV ≤ 0) — retirée du monde.
     UnitDestroyed { unit: u32, x: u32, y: u32 },
+    /// Une unité a embarqué sur une galère.
+    Embarked { unit: u32, transport: u32 },
+    /// Une unité a débarqué d'une galère sur la terre.
+    Disembarked {
+        transport: u32,
+        kind: UnitKind,
+        x: u32,
+        y: u32,
+    },
     /// Une nation a **capitulé** : `winner` annexe les `tiles` cases qu'il occupait
     /// (valant `score` points de victoire) et la paix est imposée (S5/S6).
     Capitulation {

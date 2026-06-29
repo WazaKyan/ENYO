@@ -628,6 +628,26 @@ fn draw_unit(img: &mut RgbImage, bx: u32, by: u32, px: u32, kind: UnitKind, col:
                 put(img, cxx + half, oy + r, dark);
             }
         }
+        UnitKind::Galley => {
+            // Coque (demi-losange bas) + mât + petite voile.
+            let half = m / 2;
+            for r in half..m {
+                let w = m.saturating_sub(1) - r;
+                for d in 0..=w {
+                    put(img, cxx.saturating_sub(d), oy + r, col);
+                    put(img, cxx + d, oy + r, col);
+                }
+                put(img, cxx.saturating_sub(w), oy + r, dark);
+                put(img, cxx + w, oy + r, dark);
+            }
+            for r in 0..half {
+                put(img, cxx, oy + r, dark); // mât
+            }
+            for r in 1..half {
+                put(img, cxx + 1, oy + r, col); // voile
+                put(img, cxx + 2.min(m - 1), oy + r, col);
+            }
+        }
     }
     // Barre de PV au-dessus du jeton.
     if px >= 8 {
@@ -817,8 +837,13 @@ pub fn save_building_sheet(px: u32, path: &str) -> Result<(), String> {
 pub fn unit_sheet(px: u32) -> RgbImage {
     let px = px.max(16);
     let grass = sample(TileKind::Land, Biome::Grassland, 0.6);
-    let kinds = [UnitKind::Infantry, UnitKind::Archer, UnitKind::Cavalry];
-    let (cols, rows, gap) = (3u32, 2u32, 6u32);
+    let kinds = [
+        UnitKind::Infantry,
+        UnitKind::Archer,
+        UnitKind::Cavalry,
+        UnitKind::Galley,
+    ];
+    let (cols, rows, gap) = (4u32, 2u32, 6u32);
     let mut img = RgbImage::new(cols * (px + gap) + gap, rows * (px + gap) + gap);
     for p in img.pixels_mut() {
         *p = Rgb([18, 18, 22]);
