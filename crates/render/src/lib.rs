@@ -193,8 +193,8 @@ fn hash2(x: u32, y: u32) -> u32 {
 /// touffes d'herbe, pics de montagne, vaguelettes).
 fn draw_tile(img: &mut RgbImage, bx: u32, by: u32, px: u32, t: &Tile) {
     let base = base_color(t);
-    let lo = scale_color(base, 0.84);
-    let hi = scale_color(base, 1.13);
+    let lo = scale_color(base, 0.88);
+    let hi = scale_color(base, 1.08);
 
     // Fond ditheré.
     for yy in 0..px {
@@ -466,36 +466,35 @@ fn base_color(t: &Tile) -> [u8; 3] {
     if t.kind == TileKind::Ocean {
         // Profond → clair selon l'altitude (0 = abysses, 0.5 = côte).
         let shallow = (t.elevation / SEA_LEVEL).clamp(0.0, 1.0);
-        return lerp([24, 44, 84], [58, 104, 158], shallow);
+        return lerp([20, 40, 80], [52, 108, 164], shallow);
     }
 
     // Terre : montagnes au-dessus d'un seuil d'altitude, sinon biome.
     if t.elevation > 0.9 {
-        return [236, 238, 240]; // neige
+        return [234, 238, 242]; // neige
     }
     if t.elevation > 0.8 {
-        return lerp([108, 100, 92], [150, 144, 138], (t.elevation - 0.8) / 0.1);
-        // roche
+        return lerp([104, 98, 92], [148, 142, 134], (t.elevation - 0.8) / 0.1); // roche
     }
 
     let c = biome_color(t.biome);
-    // Léger ombrage solaire selon l'altitude (plus haut = plus clair).
-    let shade = 0.9 + 0.35 * ((t.elevation - SEA_LEVEL) / (1.0 - SEA_LEVEL)).clamp(0.0, 1.0);
-    scale_color(c, shade)
+    // Ombrage solaire léger (évite le délavage).
+    let above = ((t.elevation - SEA_LEVEL) / (1.0 - SEA_LEVEL)).clamp(0.0, 1.0);
+    scale_color(c, 0.94 + 0.14 * above)
 }
 
 /// Palette de biomes (tons terreux/fantasy).
 fn biome_color(b: Biome) -> [u8; 3] {
     match b {
-        Biome::Ocean => [40, 80, 130],
-        Biome::Ice => [226, 234, 240],
-        Biome::Tundra => [156, 160, 146],
-        Biome::Boreal => [48, 86, 66],
-        Biome::Grassland => [126, 158, 90],
-        Biome::Desert => [212, 194, 134],
-        Biome::Savanna => [178, 166, 100],
-        Biome::TemperateForest => [74, 122, 78],
-        Biome::TropicalForest => [42, 100, 62],
+        Biome::Ocean => [38, 78, 132],
+        Biome::Ice => [216, 228, 236],
+        Biome::Tundra => [134, 148, 130],
+        Biome::Boreal => [40, 82, 60],
+        Biome::Grassland => [104, 158, 72],
+        Biome::Desert => [216, 196, 128],
+        Biome::Savanna => [182, 162, 84],
+        Biome::TemperateForest => [54, 112, 66],
+        Biome::TropicalForest => [32, 98, 54],
     }
 }
 
