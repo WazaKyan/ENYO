@@ -6,4 +6,4 @@ version.workspace = true
 [dependencies]
 sim.workspace = true
 # image en PNG seul : pur Rust, compile sur la toolchain GNU (pas de windows-sys).
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "gif"] }

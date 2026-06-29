@@ -387,6 +387,55 @@ pub fn save_tileset(px: u32, path: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Encode une suite de frames en **GIF animé** (boucle infinie) — pour regarder
+/// la partie évoluer.
+pub fn save_gif(frames: &[RgbImage], path: &str, delay_ms: u32) -> Result<(), String> {
+    use image::codecs::gif::{GifEncoder, Repeat};
+    use image::{Delay, Frame};
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut enc = GifEncoder::new_with_speed(file, 10);
+    enc.set_repeat(Repeat::Infinite)
+        .map_err(|e| e.to_string())?;
+    for f in frames {
+        let rgba = image::DynamicImage::ImageRgb8(f.clone()).into_rgba8();
+        let frame = Frame::from_parts(rgba, 0, 0, Delay::from_numer_denom_ms(delay_ms, 1));
+        enc.encode_frame(frame).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Planche-contact : toutes les frames en grille (toute l'évolution en 1 image).
+pub fn contact_sheet(frames: &[RgbImage], cols: u32) -> RgbImage {
+    if frames.is_empty() {
+        return RgbImage::new(1, 1);
+    }
+    let (fw, fh) = (frames[0].width(), frames[0].height());
+    let cols = cols.max(1);
+    let gap = 4u32;
+    let rows = (frames.len() as u32).div_ceil(cols);
+    let mut sheet = RgbImage::new(cols * (fw + gap) + gap, rows * (fh + gap) + gap);
+    for p in sheet.pixels_mut() {
+        *p = Rgb([18, 18, 22]);
+    }
+    for (i, f) in frames.iter().enumerate() {
+        let ox = (i as u32 % cols) * (fw + gap) + gap;
+        let oy = (i as u32 / cols) * (fh + gap) + gap;
+        for y in 0..fh.min(f.height()) {
+            for x in 0..fw.min(f.width()) {
+                sheet.put_pixel(ox + x, oy + y, *f.get_pixel(x, y));
+            }
+        }
+    }
+    sheet
+}
+
+/// Rend la planche-contact et la sauvegarde en PNG.
+pub fn save_contact(frames: &[RgbImage], cols: u32, path: &str) -> Result<(), String> {
+    contact_sheet(frames, cols)
+        .save_with_format(path, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())
+}
+
 fn fill_block(img: &mut RgbImage, bx: u32, by: u32, w: u32, h: u32, c: [u8; 3]) {
     for y in by..(by + h).min(img.height()) {
         for x in bx..(bx + w).min(img.width()) {

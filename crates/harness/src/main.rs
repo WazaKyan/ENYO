@@ -107,7 +107,19 @@ fn main() {
         None
     };
 
-    for _ in 0..args.turns {
+    // Capture de frames (échantillonnage) pour le GIF / la planche-contact.
+    let capture = args.gif.is_some() || args.contact.is_some();
+    let every = if args.frame_every > 0 {
+        args.frame_every as usize
+    } else {
+        (args.turns / 16).max(1)
+    };
+    let mut frames = Vec::new();
+    if capture {
+        frames.push(render::overview(&world, args.frame_scale.max(1)));
+    }
+
+    for i in 0..args.turns {
         run_command(&mut world, &mut rec, &mut log, Command::Step);
         // Le Directeur agit au début du tour des non-joueurs.
         if args.director_llm {
@@ -123,6 +135,9 @@ fn main() {
             for cmd in ai::plan(&world, nid) {
                 run_command(&mut world, &mut rec, &mut log, cmd);
             }
+        }
+        if capture && ((i + 1) % every == 0 || i + 1 == args.turns) {
+            frames.push(render::overview(&world, args.frame_scale.max(1)));
         }
     }
 
@@ -148,6 +163,18 @@ fn main() {
         args.log,
         args.rec
     );
+    if let Some(path) = &args.gif {
+        match render::save_gif(&frames, path, 250) {
+            Ok(()) => println!("GIF écrit: {path} ({} frames)", frames.len()),
+            Err(e) => eprintln!("échec GIF: {e}"),
+        }
+    }
+    if let Some(path) = &args.contact {
+        match render::save_contact(&frames, 4, path) {
+            Ok(()) => println!("planche-contact écrite: {path} ({} frames)", frames.len()),
+            Err(e) => eprintln!("échec planche-contact: {e}"),
+        }
+    }
     if let Some(path) = &args.png {
         let s = args.png_scale.max(1);
         match render::save_overview(&world, s, path) {
@@ -481,6 +508,10 @@ struct Args {
     region_scale: u32,
     tileset: Option<String>,
     tileset_scale: u32,
+    gif: Option<String>,
+    contact: Option<String>,
+    frame_every: u32,
+    frame_scale: u32,
 }
 
 impl Args {
@@ -510,6 +541,10 @@ impl Args {
             region_scale: 10,
             tileset: None,
             tileset_scale: 16,
+            gif: None,
+            contact: None,
+            frame_every: 0,
+            frame_scale: 1,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -575,6 +610,18 @@ impl Args {
                 "--tileset-scale" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
                         a.tileset_scale = v;
+                    }
+                }
+                "--gif" => a.gif = it.next(),
+                "--contact" => a.contact = it.next(),
+                "--frame-every" => {
+                    if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                        a.frame_every = v;
+                    }
+                }
+                "--frame-scale" => {
+                    if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                        a.frame_scale = v;
                     }
                 }
                 "--player" => {
