@@ -32,7 +32,7 @@ Le joueur est un **acteur** : il fait croître et essaimer sa civilisation et af
 | Technologie | **Arbre à 4 branches thématiques** (niveau nation) ; les paliers = les âges | ✅ |
 | Économie (MVP) | **Minimal** : développement + capacité + savoir (marchand → Phase 6) | ✅ |
 | Design gameplay | **7 systèmes cœur** (voir `docs/GAMEPLAY.md`) | ✅ |
-| Rythme | **Tour par tour** | ✅ |
+| Rythme | **Temps réel** (1 tick = 1 mois ; horloge dans `ui`) — voir `docs/REALTIME.md` | ✅ |
 | Granularité population | **Statistique par case** (agrégée) | ✅ |
 | Modèle d'IA | **Directeur DeepSeek (invisible)** — pas contrôleur direct des nations | ✅ |
 | Accès DeepSeek | **API cloud**, clé via `DEEPSEEK_API_KEY` (`.env` non versionné) | ✅ |
@@ -189,7 +189,7 @@ Case (substrat : terrain, climat, biosphère, météo, population/développement
 
 ### 5.3 Boucle de simulation & déterminisme
 
-- **Tour par tour**, déterministe. **1 tour = 1 mois.**
+- **Temps réel**, déterministe. **1 tick = 1 mois** (inchangé) ; l'horloge murale (pause + vitesses) ne vit que dans `ui` et n'entre jamais dans `sim`. *(Auparavant tour-par-tour ; le cœur de simulation est identique.)* Voir `docs/REALTIME.md`.
 - **Ordre d'un tour :**
   1. **Tour du joueur** (ses actions).
   2. **L'IA Directeur observe tout** — elle « triche » (information complète, dont le tour du joueur) — et, **au début du tour des non-joueurs**, décide de la direction de la partie (§5.5).
@@ -249,6 +249,7 @@ Le LLM (DeepSeek) **ne contrôle pas directement les nations ennemies**. C'est u
 - **Phase 5 — IA Directeur (DeepSeek V4).** Le metteur en scène (§5.5) : décisions au début du tour des non-joueurs, I/O loguées, budget/latence maîtrisés.
 - **Phase 6 — Profondeur.** Diplomatie, militaire, économie avancée, culture/religion… selon le design retenu.
 - **Phase 7 — UI / visuel.**
+- **Phase 8 — Temps réel.** Passage du tour-par-tour au **temps réel** : horloge murale **confinée à `ui`** (accumulateur µs, pause + multiplicateurs de vitesse), **1 tick = 1 `Step` = 1 mois inchangé** → déterminisme, rejeu et headless **préservés par construction** (le `.rec` rejoue tel quel). Directeur LLM en worker asynchrone appliqué à un tick-deadline fixe. Plan détaillé, refactors par crate, pièges déterminisme et roadmap A→C : **`docs/REALTIME.md`**.
 
 ---
 
