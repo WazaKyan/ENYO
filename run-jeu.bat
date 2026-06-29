@@ -22,8 +22,10 @@ echo  Lancement... un menu s'ouvre :
 echo    Jouer        : developpe ta nation
 echo    Spectateur   : regarde le monde tourner tout seul
 echo    Parametres   : graine, nations, zoom, plein ecran
-echo  Tout se fait a la souris ; les commandes clavier sont
-echo  affichees dans le jeu. (Echap = retour menu / quitter)
+echo  Le monde avance en TEMPS REEL : Pause / x1 / x2 / x4 / Max
+echo  (boutons en bas). Mode Jouer = demarre EN PAUSE.
+echo  Espace = un tick manuel. Tout se fait a la souris ; les
+echo  commandes clavier sont affichees dans le jeu. (Echap = menu)
 echo  Ta partie est enregistree -> rejouable via run-rejeu.bat
 echo ============================================================
 "%CARGO%" run --release -q -p ui

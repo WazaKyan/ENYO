@@ -3,15 +3,20 @@
 //! Interface dessinée dans le framebuffer (boutons + HUD, police bitmap `gui`).
 //! La fenêtre s'ajuste à l'écran (fenêtré ~90 % ou plein écran sans bordure).
 //!
-//! Jeu : Espace / bouton = fin de tour · clic = inspecter / agir · F = Fonder ·
-//! E = Essaimer (2 clics) · N = inspecter · 1-4 = recherche · WASD = bouger ·
-//! molette = zoom · Échap = retour menu.
-//! Spectateur : 0/1/2 = pause / ×1 / ×2 (le monde joue seul).
+//! TEMPS RÉEL : le monde avance seul selon la vitesse (Pause / ×1 / ×2 / ×4 /
+//! Max, boutons en bas). L'horloge murale est confinée ici (`RealtimeClock`),
+//! `sim` ne la voit jamais → déterminisme/rejeu intacts (1 tick = 1 mois).
+//! Espace = UN tick manuel (utile en pause). clic = inspecter / agir · F =
+//! Fonder · E = Essaimer (2 clics) · N = inspecter · 1-4 = recherche (mode Jeu) ·
+//! WASD = bouger · molette = zoom · Échap = retour menu.
+//! En spectateur / rejeu : 0-4 = vitesse au clavier.
 //!
 //! Mode agent : `--headless --shot f.png [--screen menu|settings|game]`
 //! rend exactement l'écran demandé en PNG (vérifiable sans ouvrir la fenêtre).
 
 mod gui;
+
+use std::time::Instant;
 
 use gui::{Button, Canvas};
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
@@ -20,6 +25,32 @@ use sim::World;
 
 const TOP_H: i32 = 40;
 const BOT_H: i32 = 52;
+
+/// Période d'un mois à la vitesse x1 (horloge murale, microsecondes entières).
+const BASE_TICK_US: i64 = 500_000;
+/// Garde anti-spirale : ticks max résolus en une frame (sinon orage de Step).
+const MAX_TICKS_PER_FRAME: u32 = 8;
+
+/// Période (µs) d'un tick selon la vitesse ; 0 = pause/max (gérés à part).
+fn tick_period_us(speed: u32) -> i64 {
+    match speed {
+        1 => BASE_TICK_US,
+        2 => BASE_TICK_US / 2,
+        3 => BASE_TICK_US / 4,
+        _ => 0,
+    }
+}
+
+/// Libellé court d'une vitesse, pour le HUD.
+fn speed_label(speed: u32) -> &'static str {
+    match speed {
+        0 => "Pause",
+        1 => "x1",
+        2 => "x2",
+        3 => "x4",
+        _ => "Max",
+    }
+}
 
 #[derive(PartialEq, Clone, Copy)]
 enum Tool {
@@ -181,7 +212,8 @@ struct App {
     selected: Option<(u32, u32)>,
     swarm_src: Option<(u32, u32)>,
     speed: u32,
-    frame: u64,
+    last_instant: Option<Instant>,
+    acc_us: i64,
     last_msg: String,
     stats: String,
     stats_dirty: bool,
@@ -451,7 +483,8 @@ impl App {
             selected: None,
             swarm_src: None,
             speed: 0,
-            frame: 0,
+            last_instant: None,
+            acc_us: 0,
             last_msg: String::new(),
             stats: String::new(),
             stats_dirty: true,
@@ -524,7 +557,9 @@ impl App {
         self.tool = Tool::None;
         self.selected = None;
         self.swarm_src = None;
-        self.speed = if spectator { 1 } else { 0 };
+        self.speed = if spectator { 1 } else { 0 }; // Jouer = départ en pause
+        self.last_instant = None;
+        self.acc_us = 0;
         self.last_msg.clear();
         self.stats_dirty = true;
         self.screen = Screen::Game;
@@ -580,6 +615,8 @@ impl App {
         self.replay_pos = pos;
         self.spectator = true; // pas d'action joueur en rejeu (Pause/x1/x2 dispo)
         self.speed = 0;
+        self.last_instant = None;
+        self.acc_us = 0;
         self.screen = Screen::Game;
         self.last_msg = "rejeu pret - Espace ou x1/x2 pour derouler".to_string();
         self.stats_dirty = true;
@@ -707,7 +744,6 @@ impl App {
     }
 
     fn handle_game(&mut self, input: &Input, w: i32, h: i32) {
-        self.frame = self.frame.wrapping_add(1);
         let (ww, wh) = self
             .world
             .as_ref()
@@ -763,24 +799,54 @@ impl App {
                 }
             }
         }
-        // Fin de tour (jeu) ou tour suivant (rejeu).
+        // Espace = UN tick manuel (utile en pause), jeu comme rejeu.
         if input.key_pressed(Key::Space) {
             self.advance();
         }
-        // Vitesse (spectateur ET rejeu).
+        // Touches vitesse : disponibles quand les chiffres ne servent pas a la
+        // recherche, c.-a-d. en spectateur et en rejeu (spectator==true).
         if self.spectator {
-            for (k, s) in [(Key::Key0, 0u32), (Key::Key1, 1), (Key::Key2, 2)] {
+            for (k, s) in [
+                (Key::Key0, 0u32),
+                (Key::Key1, 1),
+                (Key::Key2, 2),
+                (Key::Key3, 3),
+                (Key::Key4, 4),
+            ] {
                 if input.key_pressed(k) {
                     self.speed = s;
                 }
             }
         }
 
-        // Auto-déroulé (spectateur ou rejeu) selon la vitesse.
-        if self.spectator && self.speed > 0 {
-            let interval: u64 = if self.speed >= 2 { 12 } else { 28 };
-            if self.frame.is_multiple_of(interval) {
-                self.advance();
+        // Horloge murale : avance le monde (jeu, spectateur, rejeu) selon la
+        // vitesse. Confinee a `ui` : ne decide QUE combien de Step et quand.
+        let now = Instant::now();
+        let dt_us = self
+            .last_instant
+            .map(|l| now.duration_since(l).as_micros() as i64)
+            .unwrap_or(0);
+        self.last_instant = Some(now); // remis a chaque frame, meme en pause
+        match self.speed {
+            0 => self.acc_us = 0, // pause : on n'accumule pas
+            s if s >= 4 => {
+                // Max : rafale bornee (fast-forward / observation rapide)
+                for _ in 0..MAX_TICKS_PER_FRAME {
+                    self.advance();
+                }
+            }
+            s => {
+                let period = tick_period_us(s);
+                self.acc_us += dt_us;
+                let mut n = 0;
+                while self.acc_us >= period && n < MAX_TICKS_PER_FRAME {
+                    self.advance();
+                    self.acc_us -= period;
+                    n += 1;
+                }
+                if self.acc_us > period {
+                    self.acc_us = 0; // garde anti-spirale : on jette le surplus
+                }
             }
         }
 
@@ -974,28 +1040,37 @@ impl App {
         let by = h - BOT_H + 12;
         let tbh = 28;
         let mut x = pad;
-        for (lbl, t) in [
-            ("Inspecter", Tool::None),
-            ("Fonder", Tool::Found),
-            ("Essaimer", Tool::Swarm),
-        ] {
+        let playing = !self.spectator && !self.replay_mode;
+        // Outils : Inspecter toujours ; Fonder/Essaimer seulement en mode Jeu.
+        let tools: &[(&str, Tool)] = if playing {
+            &[
+                ("Inspecter", Tool::None),
+                ("Fonder", Tool::Found),
+                ("Essaimer", Tool::Swarm),
+            ]
+        } else {
+            &[("Inspecter", Tool::None)]
+        };
+        for (lbl, t) in tools {
             let bw = gui::text_w(lbl, 2) + 18;
-            v.push((GameBtn::Tool(t), Button::new(x, by, bw, tbh, lbl)));
+            v.push((GameBtn::Tool(*t), Button::new(x, by, bw, tbh, *lbl)));
             x += bw + 6;
         }
-        x += 24;
-        if self.spectator {
-            for (lbl, s) in [("Pause", 0u32), ("x1", 1), ("x2", 2)] {
-                let bw = gui::text_w(lbl, 2) + 18;
-                v.push((GameBtn::Speed(s), Button::new(x, by, bw, tbh, lbl)));
-                x += bw + 6;
-            }
-        } else {
+        // Recherche : seulement en mode Jeu (les chiffres 1-4 servent a ca).
+        if playing {
+            x += 24;
             for (i, lbl) in ["Essor", "Terroir", "Fer", "Lien"].iter().enumerate() {
                 let bw = gui::text_w(lbl, 2) + 18;
                 v.push((GameBtn::Research(i as u8), Button::new(x, by, bw, tbh, *lbl)));
                 x += bw + 6;
             }
+        }
+        // Vitesse : dans TOUS les modes (le temps reel s'applique partout).
+        x += 24;
+        for (lbl, s) in [("Pause", 0u32), ("x1", 1), ("x2", 2), ("x4", 3), ("Max", 4)] {
+            let bw = gui::text_w(lbl, 2) + 16;
+            v.push((GameBtn::Speed(s), Button::new(x, by, bw, tbh, lbl)));
+            x += bw + 6;
         }
         v
     }
@@ -1153,9 +1228,10 @@ impl App {
             // Barre du bas.
             c.fill_rect(0, h - BOT_H, w, BOT_H, gui::PANEL);
             c.fill_rect(0, h - BOT_H, w, 1, gui::BORDER);
+            let spd = speed_label(self.speed);
             let mode_line = if self.replay_mode {
                 format!(
-                    "REJEU  -  {} / {} commandes  -  tech E{} T{} F{} L{}",
+                    "REJEU [{spd}]  -  {} / {} commandes  -  tech E{} T{} F{} L{}",
                     self.replay_pos,
                     self.replay_cmds.len(),
                     tech[0],
@@ -1166,7 +1242,7 @@ impl App {
             } else {
                 let mode = if self.spectator { "SPECTATEUR" } else { "JEU" };
                 format!(
-                    "Mode {mode}  -  outil: {toolname}  -  tech E{} T{} F{} L{}",
+                    "Mode {mode} [{spd}]  -  outil: {toolname}  -  tech E{} T{} F{} L{}",
                     tech[0], tech[1], tech[2], tech[3]
                 )
             };
@@ -1177,7 +1253,7 @@ impl App {
                 let hover = b.hit(mx, my);
                 let active = match id {
                     GameBtn::Tool(t) => *t == self.tool,
-                    GameBtn::Speed(s) => self.spectator && *s == self.speed,
+                    GameBtn::Speed(s) => *s == self.speed,
                     _ => false,
                 };
                 b.draw(&mut c, hover, active);
