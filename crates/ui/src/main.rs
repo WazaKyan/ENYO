@@ -915,7 +915,8 @@ impl App {
                 }
             }
             if let Some(i) = new_intent {
-                self.director.set_intent(i);
+                let turn_now = self.world.as_ref().map(|w| w.turn).unwrap_or(0);
+                self.director.set_intent(i, turn_now); // ré-ancre until_turn (M2)
             }
             if let Some(s) = status {
                 self.director_status = s;

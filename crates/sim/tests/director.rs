@@ -59,6 +59,34 @@ fn windfall_heals_devastation() {
 #[test]
 fn director_grievance_nudges_opinion() {
     let mut w = World::new(10, 80, 60);
+    // Les nations doivent exister (validation du grief, cf. audit M1).
+    let (x0, y0) = productive(&w);
+    w.apply(Command::Settle {
+        x: x0,
+        y: y0,
+        nation: 0,
+        population: 500,
+    });
+    let mut second = None;
+    'f: for y in 0..w.height {
+        for x in 0..w.width {
+            if (x, y) != (x0, y0)
+                && w.tile(x, y).kind == TileKind::Land
+                && w.capacity_at(x, y) > 300.0
+            {
+                second = Some((x, y));
+                break 'f;
+            }
+        }
+    }
+    let (x1, y1) = second.expect("seconde terre productive");
+    w.apply(Command::Settle {
+        x: x1,
+        y: y1,
+        nation: 1,
+        population: 500,
+    });
+
     let ev = w.apply(Command::DirectorGrievance {
         from: 1,
         to: 0,
@@ -66,4 +94,30 @@ fn director_grievance_nudges_opinion() {
     });
     assert!(matches!(ev[0], Event::OpinionNudged { .. }));
     assert!(w.diplomacy.grievance(1, 0) > 0.0);
+}
+
+#[test]
+fn director_grievance_rejects_invalid() {
+    let mut w = World::new(10, 80, 60);
+    let (x, y) = productive(&w);
+    w.apply(Command::Settle {
+        x,
+        y,
+        nation: 0,
+        population: 500,
+    });
+    // Grief depuis une nation inexistante -> rejeté (défense en profondeur M1).
+    let ev = w.apply(Command::DirectorGrievance {
+        from: 7,
+        to: 0,
+        amount: 5,
+    });
+    assert!(matches!(ev[0], Event::CommandRejected { .. }));
+    // Grief réflexif -> rejeté.
+    let ev = w.apply(Command::DirectorGrievance {
+        from: 0,
+        to: 0,
+        amount: 5,
+    });
+    assert!(matches!(ev[0], Event::CommandRejected { .. }));
 }

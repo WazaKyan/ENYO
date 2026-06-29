@@ -360,14 +360,24 @@ impl DirectorWorker {
         }
     }
 
-    /// Récupère un résultat sans bloquer (libère le créneau).
+    /// Récupère un résultat sans bloquer (libère le créneau). Distingue le canal
+    /// vide du canal déconnecté (thread mort) pour ne pas rester `busy` à vie (L5).
     pub fn poll(&self) -> Option<Result<Intent, String>> {
+        use std::sync::mpsc::TryRecvError;
         match self.res_rx.try_recv() {
             Ok(r) => {
                 self.in_flight.set(false);
                 Some(r)
             }
-            Err(_) => None,
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                if self.in_flight.get() {
+                    self.in_flight.set(false);
+                    Some(Err("worker LLM arrêté".to_string()))
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -379,11 +389,12 @@ impl DirectorWorker {
 
 impl Drop for DirectorWorker {
     fn drop(&mut self) {
-        // Fermer le canal d'entrée fait sortir le thread de `recv()`, puis on join.
+        // Fermer le canal d'entrée fait sortir le thread de `recv()` après son
+        // curl courant. On NE joint PAS (corrige M6 : joindre figerait l'UI
+        // jusqu'à ~35 s si un curl est en vol). Le thread est détaché ; la
+        // sécurité anti-cross-game vient des canaux par-worker, pas du join.
         self.req_tx = None;
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
+        self.handle.take(); // drop du JoinHandle -> thread détaché
     }
 }
 
@@ -453,9 +464,12 @@ pub fn parse_intent(content: &str, turn: u64) -> Option<Intent> {
         .and_then(|x| x.as_u64())
         .unwrap_or(12)
         .clamp(1, 120);
+    // Filtre de plage AVANT le cast (corrige M1 : 65536 as u16 = 0 = le joueur).
+    // L'existence de la nation est validée plus tard par ai::valid_focus.
     let focus = v
         .get("focus_nation")
         .and_then(|x| x.as_u64())
+        .filter(|n| *n <= u16::MAX as u64)
         .map(|n| n as u16);
     let public_cause = v
         .get("public_cause")
@@ -470,7 +484,8 @@ pub fn parse_intent(content: &str, turn: u64) -> Option<Intent> {
     Some(Intent {
         stance,
         intensity,
-        until_turn: turn + duration,
+        duration,
+        until_turn: turn + duration, // ré-ancré à l'application (Director::set_intent)
         focus,
         public_cause,
         hidden_intent,

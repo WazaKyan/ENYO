@@ -156,12 +156,18 @@ impl World {
             Command::DeclareWar { nation, target } => self.declare_war(nation, target),
             Command::MakePeace { nation, target } => self.make_peace(nation, target),
             Command::DirectorGrievance { from, to, amount } => {
-                self.diplomacy.add_grievance(from, to, amount as f32);
-                vec![Event::OpinionNudged {
-                    from,
-                    to,
-                    amount: amount as f32,
-                }]
+                // Défense en profondeur (cohérent avec declare_war/settle/…) :
+                // refuser un grief réflexif ou depuis/vers une nation inexistante.
+                if from == to || self.nation(from).is_none() || self.nation(to).is_none() {
+                    reject("grief invalide (réflexif ou nation inexistante)")
+                } else {
+                    self.diplomacy.add_grievance(from, to, amount as f32);
+                    vec![Event::OpinionNudged {
+                        from,
+                        to,
+                        amount: amount as f32,
+                    }]
+                }
             }
             Command::DirectorBlight { x, y, amount } => self.blight(x, y, amount),
             Command::DirectorWindfall { x, y, amount } => self.windfall(x, y, amount),

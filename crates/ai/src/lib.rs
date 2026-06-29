@@ -193,9 +193,9 @@ fn distance(x: u32, y: u32, px: u32, py: u32, width: u32) -> i64 {
 // ---------------------------------------------------------------------------
 
 /// Au-delà de cette domination, on attise une coalition contre le joueur.
-const DOMINANCE_PRESSURE: f32 = 0.10;
+pub(crate) const DOMINANCE_PRESSURE: f32 = 0.10;
 /// Domination écrasante : on ajoute une calamité « naturelle ».
-const DOMINANCE_BLIGHT: f32 = 0.25;
+pub(crate) const DOMINANCE_BLIGHT: f32 = 0.25;
 const DIRECTOR_PRESSURE: u32 = 5;
 const DIRECTOR_BLIGHT: u32 = 25;
 const DIRECTOR_RELIEF: u32 = 30;
