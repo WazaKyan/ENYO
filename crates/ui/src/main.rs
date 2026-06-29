@@ -4,12 +4,13 @@
 //! Contrôles : WASD/flèches = se déplacer · molette = zoom · **Espace = Fin de
 //! tour** (Step + Directeur + IA) · clic = inspecter une case · **F** = outil
 //! Fonder · **E** = outil Essaimer (2 clics) · **N** = aucun outil · Échap = quitter.
+//! Recherche (mode joueur) : **1/2/3/4** = Essor / Terroir / Fer / Lien.
 //! Spectateur (`--spectator`) : **0/1/2** = pause / ×1 / ×2 (auto-tour).
 //! Le HUD textuel est dans la BARRE DE TITRE (pas de police à coder).
 //! Mode agent : `--headless --shot f.png` (même image que la fenêtre).
 
 use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
-use proto::Command;
+use proto::{Command, Event};
 use sim::World;
 
 const WIN_W: u32 = 1280;
@@ -80,6 +81,7 @@ fn main() {
     let mut frame: u64 = 0;
     let mut mouse_was_down = false;
     let mut dirty = true;
+    let mut last_msg = String::new();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         frame = frame.wrapping_add(1);
@@ -123,15 +125,32 @@ fn main() {
             dirty = true;
         }
 
-        // Vitesse (spectateur).
-        if window.is_key_pressed(Key::Key0, KeyRepeat::No) {
-            speed = 0;
-        }
-        if window.is_key_pressed(Key::Key1, KeyRepeat::No) {
-            speed = 1;
-        }
-        if window.is_key_pressed(Key::Key2, KeyRepeat::No) {
-            speed = 2;
+        // Chiffres : vitesse en spectateur, recherche en mode joueur
+        // (les deux modes sont exclusifs, donc pas de conflit de touches).
+        if args.spectator {
+            if window.is_key_pressed(Key::Key0, KeyRepeat::No) {
+                speed = 0;
+            }
+            if window.is_key_pressed(Key::Key1, KeyRepeat::No) {
+                speed = 1;
+            }
+            if window.is_key_pressed(Key::Key2, KeyRepeat::No) {
+                speed = 2;
+            }
+        } else {
+            let branches = [Key::Key1, Key::Key2, Key::Key3, Key::Key4];
+            for (b, k) in branches.iter().enumerate() {
+                if window.is_key_pressed(*k, KeyRepeat::No) {
+                    let ev = world.apply(Command::Research {
+                        nation: args.player,
+                        branch: b as u8,
+                    });
+                    if let Some(m) = feedback(&ev) {
+                        last_msg = m;
+                    }
+                    dirty = true;
+                }
+            }
         }
 
         // Fin de tour : manuelle (Espace) ou auto (spectateur selon la vitesse).
@@ -162,23 +181,30 @@ fn main() {
                     selected = Some((tx, ty));
                     match tool {
                         Tool::Found => {
-                            world.apply(Command::Settle {
+                            let ev = world.apply(Command::Settle {
                                 x: tx,
                                 y: ty,
                                 nation: args.player,
                                 population: 300,
                             });
+                            if let Some(m) = feedback(&ev) {
+                                last_msg = m;
+                            }
                         }
                         Tool::Swarm => {
                             if let Some((sx, sy)) = swarm_src.take() {
-                                world.apply(Command::Swarm {
+                                let ev = world.apply(Command::Swarm {
                                     from_x: sx,
                                     from_y: sy,
                                     to_x: tx,
                                     to_y: ty,
                                 });
+                                if let Some(m) = feedback(&ev) {
+                                    last_msg = m;
+                                }
                             } else {
                                 swarm_src = Some((tx, ty));
+                                last_msg = format!("source ({tx},{ty}) — clique la cible");
                             }
                         }
                         Tool::None => {}
@@ -191,7 +217,7 @@ fn main() {
 
         // HUD (barre de titre) — recalculé seulement quand l'état change.
         if dirty {
-            window.set_title(&hud(&world, &args, tool, selected));
+            window.set_title(&hud(&world, &args, tool, selected, &last_msg));
             dirty = false;
         }
 
@@ -202,15 +228,42 @@ fn main() {
     }
 }
 
+/// Traduit le résultat d'une commande joueur en message court pour le HUD
+/// (rejet ou succès) — rien n'est silencieux côté joueur non plus.
+fn feedback(events: &[Event]) -> Option<String> {
+    for e in events {
+        match e {
+            Event::CommandRejected { reason } => return Some(format!("REJET : {reason}")),
+            Event::Settled {
+                x, y, population, ..
+            } => return Some(format!("fonde ({x},{y}) +{population} hab")),
+            Event::Swarmed {
+                to_x, to_y, moved, ..
+            } => return Some(format!("essaimage vers ({to_x},{to_y}) +{moved:.0} hab")),
+            Event::Researched { branch, tier, .. } => {
+                let b = ["Essor", "Terroir", "Fer", "Lien"]
+                    .get(*branch as usize)
+                    .copied()
+                    .unwrap_or("?");
+                return Some(format!("{b} palier {tier}"));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Construit la ligne de HUD affichée dans la barre de titre.
-fn hud(world: &World, args: &Args, tool: Tool, selected: Option<(u32, u32)>) -> String {
+fn hud(world: &World, args: &Args, tool: Tool, selected: Option<(u32, u32)>, last_msg: &str) -> String {
     let (pop, tiles) = world.nation_stats(args.player);
     let prov = world
         .provinces()
         .iter()
         .filter(|p| p.owner == args.player)
         .count();
-    let tech = world.nation(args.player).map(|n| n.tech).unwrap_or_default();
+    let n = world.nation(args.player);
+    let kn = n.map(|n| n.knowledge).unwrap_or(0.0);
+    let t = n.map(|n| n.tech).unwrap_or_default();
     let year = world.turn / 12;
     let month = world.turn % 12 + 1;
     let mode = if args.spectator { "SPECTATEUR" } else { "JEU" };
@@ -219,10 +272,18 @@ fn hud(world: &World, args: &Args, tool: Tool, selected: Option<(u32, u32)>) -> 
         Tool::Found => "Fonder",
         Tool::Swarm => "Essaimer",
     };
+    let research_hint = if args.spectator {
+        "0/1/2=vitesse"
+    } else {
+        "1-4=recherche"
+    };
     let mut s = format!(
-        "ENYO | An {year} M{month} | {mode} N{} : {pop:.0} hab, {tiles} cases, {prov} prov, tech {tech:?} | Outil: {toolname} (F/E/N, Espace=fin de tour)",
-        args.player
+        "ENYO | An {year} M{month} | {mode} N{} : {pop:.0} hab, {tiles} cases, {prov} prov | savoir {kn:.0} | tech E{} T{} F{} L{} | Outil: {toolname} (F/E/N, Espace=fin de tour, {research_hint})",
+        args.player, t[0], t[1], t[2], t[3]
     );
+    if !last_msg.is_empty() {
+        s.push_str(&format!(" | >> {last_msg}"));
+    }
     if let Some((tx, ty)) = selected {
         let t = world.tile(tx, ty);
         let owner = t

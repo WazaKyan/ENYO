@@ -24,6 +24,7 @@ echo    ESPACE          = fin de tour (le monde evolue)
 echo    F               = outil Fonder   (puis clic sur une case)
 echo    E               = outil Essaimer (2 clics : source puis cible)
 echo    N               = aucun outil     clic = inspecter une case
+echo    1 2 3 4         = recherche (Essor / Terroir / Fer / Lien)
 echo    Echap           = quitter
 echo  (les infos s'affichent dans la barre de titre de la fenetre)
 echo ============================================================
