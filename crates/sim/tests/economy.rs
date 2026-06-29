@@ -121,7 +121,6 @@ fn commerce_makes_money_and_housing_from_materials() {
     });
     assert!(matches!(ev[0], Event::Built { .. }), "commerce bâti");
     let money0 = w.nation(0).unwrap().money;
-    let house0 = w.nation(0).unwrap().housing;
     for _ in 0..15 {
         w.apply(Command::Step);
     }
@@ -132,7 +131,8 @@ fn commerce_makes_money_and_housing_from_materials() {
         money0,
         n.money
     );
-    assert!(n.housing > house0, "le commerce génère de l'habitation");
+    // (L'habitation produite est consommée par l'urbanisation → population ;
+    //  c'est `housing_urbanizes_population` qui vérifie ce volet.)
 }
 
 #[test]
@@ -298,6 +298,117 @@ fn military_recruits_soldiers_for_upkeep() {
     assert!(
         w.nation(0).unwrap().money < m0,
         "la caserne coûte un entretien mensuel"
+    );
+}
+
+/// Case à capacité ≥ 1500 (pop stable ≥ 1000 pour essaimer) avec un voisin terre.
+fn high_cap_with_neighbor(w: &World) -> ((u32, u32), (u32, u32)) {
+    for y in 0..w.height {
+        for x in 0..w.width - 1 {
+            if w.capacity_at(x, y) >= 1500.0 && w.tile(x + 1, y).kind == TileKind::Land {
+                return ((x, y), (x + 1, y));
+            }
+        }
+    }
+    panic!("pas de case à haute capacité avec voisin terre");
+}
+
+#[test]
+fn swarm_costs_influence() {
+    let mut w = World::new(17, 80, 60);
+    let (a, b) = high_cap_with_neighbor(&w);
+    w.apply(Command::Settle {
+        x: a.0,
+        y: a.1,
+        nation: 0,
+        population: 2000,
+    });
+    // Sans influence (mois 0) -> essaimage refusé.
+    let ev = w.apply(Command::Swarm {
+        from_x: a.0,
+        from_y: a.1,
+        to_x: b.0,
+        to_y: b.1,
+    });
+    assert!(
+        matches!(ev[0], Event::CommandRejected { .. }),
+        "essaimage sans influence -> rejet"
+    );
+    // Accumuler l'influence (+1/mois) ; la pop plafonne à la capacité (≥ 1000).
+    for _ in 0..10 {
+        w.apply(Command::Step);
+    }
+    let infl = w.nation(0).unwrap().influence;
+    assert!(infl >= 10, "influence accumulée (got {infl})");
+    assert!(w.tile(a.0, a.1).population >= 1000.0);
+    let ev = w.apply(Command::Swarm {
+        from_x: a.0,
+        from_y: a.1,
+        to_x: b.0,
+        to_y: b.1,
+    });
+    assert!(matches!(ev[0], Event::Swarmed { .. }), "essaimage réussi");
+    assert!(
+        w.nation(0).unwrap().influence < infl,
+        "l'essaimage consomme de l'influence"
+    );
+}
+
+/// Croissance de C (case faible) sur 15 mois, avec ou sans commerce (donc avec ou
+/// sans habitation pour l'urbanisation). La croissance naturelle est identique →
+/// la différence isole l'urbanisation (habitation → population).
+fn growth_of_weak_tile(with_commerce: bool) -> f32 {
+    let mut w = World::new(19, 80, 60);
+    let [a, b, c] = three_land_in_row(&w);
+    w.apply(Command::Settle {
+        x: a.0,
+        y: a.1,
+        nation: 0,
+        population: 1500,
+    });
+    w.apply(Command::Settle {
+        x: b.0,
+        y: b.1,
+        nation: 0,
+        population: 1500,
+    });
+    w.apply(Command::Settle {
+        x: c.0,
+        y: c.1,
+        nation: 0,
+        population: 30,
+    });
+    w.apply(Command::Build {
+        x: a.0,
+        y: a.1,
+        nation: 0,
+        building: Building::Industry,
+    });
+    for _ in 0..40 {
+        w.apply(Command::Step);
+    }
+    if with_commerce {
+        w.apply(Command::Build {
+            x: b.0,
+            y: b.1,
+            nation: 0,
+            building: Building::Commerce,
+        });
+    }
+    let c0 = w.tile(c.0, c.1).population;
+    for _ in 0..15 {
+        w.apply(Command::Step);
+    }
+    w.tile(c.0, c.1).population - c0
+}
+
+#[test]
+fn housing_urbanizes_population() {
+    let with = growth_of_weak_tile(true);
+    let without = growth_of_weak_tile(false);
+    assert!(
+        with > without,
+        "l'habitation (commerce) accélère la croissance ({without} -> {with})"
     );
 }
 

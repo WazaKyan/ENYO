@@ -6,31 +6,37 @@ use proto::Command;
 use sim::tile::TileKind;
 use sim::World;
 
-fn productive(w: &World) -> (u32, u32) {
+/// Case à capacité ≥ 1500 : la pop y reste ≥ 1000 après plafonnement (pour essaimer).
+fn high_cap(w: &World) -> (u32, u32) {
     for y in 0..w.height {
         for x in 0..w.width {
-            if w.tile(x, y).kind == TileKind::Land && w.capacity_at(x, y) > 400.0 {
+            if w.tile(x, y).kind == TileKind::Land && w.capacity_at(x, y) >= 1500.0 {
                 return (x, y);
             }
         }
     }
-    panic!("aucune terre productive");
+    panic!("aucune terre à haute capacité");
 }
 
 #[test]
 fn plan_expands_grown_nation() {
     let mut w = World::new(20, 100, 70);
-    let (x, y) = productive(&w);
+    let (x, y) = high_cap(&w);
     w.apply(Command::Settle {
         x,
         y,
         nation: 0,
         population: 2000,
     });
+    // L'essaimage coûte de l'influence (E5) : il faut l'accumuler d'abord.
+    for _ in 0..12 {
+        w.apply(Command::Step);
+    }
+    assert!(w.tile(x, y).population >= 1000.0);
     let cmds = plan(&w, 0);
     assert!(
         cmds.iter().any(|c| matches!(c, Command::Swarm { .. })),
-        "l'IA doit proposer un essaimage pour une case >=1000"
+        "l'IA doit proposer un essaimage pour une case >=1000 avec influence"
     );
 }
 

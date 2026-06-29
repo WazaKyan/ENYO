@@ -58,6 +58,16 @@ fn connected_tiles_form_one_province() {
     assert_eq!(w.provinces().len(), 1);
     assert_eq!(w.provinces()[0].tiles, 1);
 
+    // L'essaimage coûte de l'influence (E5) : l'accumuler, puis remonter la pop.
+    for _ in 0..10 {
+        w.apply(Command::Step);
+    }
+    w.apply(Command::Settle {
+        x,
+        y,
+        nation: 0,
+        population: 2000,
+    });
     let ev = w.apply(Command::Swarm {
         from_x: x,
         from_y: y,

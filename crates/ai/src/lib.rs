@@ -75,13 +75,25 @@ pub fn plan(world: &World, nation: u16) -> Vec<Command> {
     cmds
 }
 
-/// Essaimage glouton : chaque case ≥1000 hab. vers une terre adjacente libre.
+/// Essaimage glouton : chaque case ≥1000 hab. vers une terre adjacente libre,
+/// dans la limite de l'influence disponible (E5 : essaimer coûte de l'influence).
 fn expansion(world: &World, nation: u16) -> Vec<Command> {
     let w = world.width as i64;
     let h = world.height as i64;
+    // Nombre d'essaimages que la nation peut s'offrir ce tour.
+    let mut budget = world
+        .nation(nation)
+        .map(|n| n.influence / sim::SWARM_INFLUENCE)
+        .unwrap_or(0);
+    if budget <= 0 {
+        return Vec::new();
+    }
     let mut cmds = Vec::new();
     let mut targeted: HashSet<usize> = HashSet::new();
     for (idx, t) in world.tiles.iter().enumerate() {
+        if budget <= 0 {
+            break;
+        }
         if t.owner != Some(nation) || t.population < 1000.0 {
             continue;
         }
@@ -102,6 +114,7 @@ fn expansion(world: &World, nation: u16) -> Vec<Command> {
                     to_x: nx as u32,
                     to_y: ny as u32,
                 });
+                budget -= 1;
                 break;
             }
         }

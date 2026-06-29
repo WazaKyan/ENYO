@@ -113,6 +113,10 @@ fn swarm_requires_threshold_then_succeeds() {
         "doit refuser sous 1000"
     );
 
+    // L'essaimage coûte de l'influence (E5) : l'accumuler d'abord.
+    for _ in 0..10 {
+        w.apply(Command::Step);
+    }
     // Au-dessus de 1000 et à portée d'une case adjacente : succès.
     w.apply(Command::Settle {
         x,

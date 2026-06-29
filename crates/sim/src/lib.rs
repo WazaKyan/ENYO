@@ -36,6 +36,11 @@ const KNOWLEDGE_RATE: f32 = 1.0;
 // --- Calibrage économie interne S8 (single-source) ---
 /// Influence gagnée par nation et par mois (de base).
 const INFLUENCE_BASE: i64 = 1;
+/// Coût en influence d'un essaimage (S2/E5) : étendre son territoire. Public :
+/// l'IA s'en sert pour ne pas essaimer sans influence.
+pub const SWARM_INFLUENCE: i64 = 10;
+/// Population engendrée par unité d'habitation consommée (urbanisation).
+const POP_PER_HOUSING: f32 = 1.0;
 /// Matériaux max/mois d'une industrie idéale, pleinement dotée en main-d'œuvre.
 const INDUSTRY_BASE: f32 = 8.0;
 /// Population connectée pour une main-d'œuvre pleine (au-delà : plafonnée).
@@ -275,6 +280,9 @@ impl World {
         }
 
         let ni = self.ensure_nation(nation);
+        if self.nations[ni].influence < SWARM_INFLUENCE {
+            return reject("influence insuffisante");
+        }
         let essor = self.nations[ni].tech[nation::ESSOR];
         let naval = self.nations[ni].tech[nation::LIEN];
         let budget = path::range_budget(essor);
@@ -289,6 +297,7 @@ impl World {
             naval,
         ) {
             Some(_) => {
+                self.nations[ni].influence -= SWARM_INFLUENCE; // coût d'expansion (E5)
                 let moved = self.tiles[from].population * 0.5;
                 self.tiles[from].population -= moved;
                 let t = &mut self.tiles[to];
@@ -721,6 +730,34 @@ impl World {
             self.nations[i].money += money_gain[i];
             self.nations[i].housing += housing_gain[i];
             self.nations[i].knowledge += science_gain[i];
+        }
+
+        // Urbanisation (E5) : l'habitation (produite par le commerce) comble les
+        // villes vers leur capacité (commerce → population). Consommée en ordre
+        // d'index, jamais au-delà de la capacité (pas de famine artificielle).
+        for y in 0..height {
+            for x in 0..width {
+                let idx = y as usize * width as usize + x as usize;
+                let Some(owner) = self.tiles[idx].owner else {
+                    continue;
+                };
+                let Some(i) = self.nations.iter().position(|n| n.id == owner) else {
+                    continue;
+                };
+                if self.nations[i].housing <= 0 {
+                    continue;
+                }
+                let terroir = self.nations[i].tech[nation::TERROIR];
+                let capacity = dynamics::carrying_capacity(&self.tiles[idx], terroir);
+                let headroom = (capacity - self.tiles[idx].population).max(0.0);
+                let units = (headroom / POP_PER_HOUSING)
+                    .floor()
+                    .min(self.nations[i].housing as f32);
+                if units >= 1.0 {
+                    self.tiles[idx].population += units * POP_PER_HOUSING;
+                    self.nations[i].housing -= units as i64;
+                }
+            }
         }
     }
 
