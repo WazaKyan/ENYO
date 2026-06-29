@@ -88,7 +88,7 @@ fn category_of(t: Tool) -> Option<Category> {
         Tool::Swarm | Tool::Demolish => Some(Category::Economy),
         Tool::Create(_) | Tool::Units => Some(Category::Military),
         Tool::War | Tool::Peace => Some(Category::Diplomacy),
-        Tool::Build(Building::Military) => Some(Category::Military),
+        Tool::Build(Building::Military) | Tool::Build(Building::Port) => Some(Category::Military),
         Tool::Build(_) => Some(Category::Economy),
         Tool::None => None,
     }
@@ -1378,6 +1378,7 @@ impl App {
                     push_tool(&mut v, &mut x, "Archers", Tool::Create(UnitKind::Archer));
                     push_tool(&mut v, &mut x, "Cavalerie", Tool::Create(UnitKind::Cavalry));
                     push_tool(&mut v, &mut x, "Caserne", Tool::Build(Building::Military));
+                    push_tool(&mut v, &mut x, "Port", Tool::Build(Building::Port));
                 }
                 Category::Diplomacy => {
                     push_tool(&mut v, &mut x, "Guerre", Tool::War);
@@ -1532,6 +1533,7 @@ impl App {
             Tool::Build(Building::Education) => "Education",
             Tool::Build(Building::Military) => "Caserne",
             Tool::Build(Building::Farm) => "Ferme",
+            Tool::Build(Building::Port) => "Port",
             Tool::Demolish => "Demolir",
             Tool::Create(UnitKind::Infantry) => "Infanterie",
             Tool::Create(UnitKind::Archer) => "Archers",
@@ -1744,6 +1746,7 @@ fn building_fr(b: Building) -> &'static str {
         Building::Education => "Education",
         Building::Military => "Caserne",
         Building::Farm => "Ferme",
+        Building::Port => "Port",
     }
 }
 
@@ -1766,6 +1769,7 @@ fn building_role(b: Building) -> &'static str {
         Building::Education => "Produit de la science (exige un commerce connecte).",
         Building::Military => "Produit de la force (pour recruter des unites).",
         Building::Farm => "Produit de la nourriture (selon le terrain).",
+        Building::Port => "Sur une cote (eau) : force + recrute des navires.",
     }
 }
 

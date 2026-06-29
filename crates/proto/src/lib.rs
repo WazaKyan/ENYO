@@ -26,6 +26,9 @@ pub enum Building {
     Military,
     /// Produit de la nourriture (rendement ∝ terrain : humidité, température…).
     Farm,
+    /// Port : seul bâtiment constructible sur l'EAU (case côtière) ; produit du
+    /// manpower et permet de recruter des **unités navales**.
+    Port,
 }
 
 /// Type d'unité militaire (S5). Débloqué par la branche **Fer** ; chaque type a

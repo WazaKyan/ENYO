@@ -693,9 +693,9 @@ impl World {
                         let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
                         science_gain[ni] += SCIENCE_BASE * workforce;
                     }
-                    // Caserne : produit du **manpower** (national) depuis la pop
-                    // connectée, contre un entretien mensuel ; sinon rien.
-                    Building::Military
+                    // Caserne / port : produisent du **manpower** (national) depuis
+                    // la pop connectée, contre un entretien mensuel ; sinon rien.
+                    Building::Military | Building::Port
                         if cpop > 0.0 && self.nations[ni].money >= MILITARY_UPKEEP =>
                     {
                         self.nations[ni].money -= MILITARY_UPKEEP;
@@ -778,19 +778,53 @@ impl World {
     }
 
     /// Bâtit (S8) un bâtiment sur une case possédée et vide, si la nation paie.
+    /// La case d'eau `idx` est-elle une **côte** pour `nation` (adjacente à une de
+    /// ses terres) — condition pour y bâtir un port ?
+    fn is_coastal_for(&self, idx: usize, nation: u16) -> bool {
+        let (w, h) = (self.width as i64, self.height as i64);
+        let (x, y) = (idx as i64 % w, idx as i64 / w);
+        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+            let nx = (x + dx).rem_euclid(w);
+            let ny = y + dy;
+            if ny < 0 || ny >= h {
+                continue;
+            }
+            let v = (ny * w + nx) as usize;
+            if self.tiles[v].kind == TileKind::Land && self.tiles[v].owner == Some(nation) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn build(&mut self, x: u32, y: u32, nation: u16, building: Building) -> Vec<Event> {
         if x >= self.width || y >= self.height {
             return reject("hors carte");
         }
         let idx = self.index(x, y);
-        if self.tiles[idx].owner != Some(nation) {
-            return reject("case non possédée");
-        }
-        if self.tiles[idx].kind != TileKind::Land {
-            return reject("pas une terre"); // défense en profondeur (cf. settle/swarm)
-        }
         if self.tiles[idx].building.is_some() {
             return reject("case déjà bâtie");
+        }
+        // Le **port** est le SEUL bâtiment constructible sur l'eau : sur une case
+        // d'océan **côtière** (adjacente à une terre possédée), qu'il revendique.
+        // Tout autre bâtiment exige une terre possédée (rien d'autre sur l'eau).
+        if building == Building::Port {
+            if self.tiles[idx].kind != TileKind::Ocean {
+                return reject("le port se construit sur l'eau (côte)");
+            }
+            if !self.is_coastal_for(idx, nation) {
+                return reject("pas une côte (aucune terre à toi adjacente)");
+            }
+            if matches!(self.tiles[idx].owner, Some(o) if o != nation) {
+                return reject("eau déjà possédée");
+            }
+        } else {
+            if self.tiles[idx].owner != Some(nation) {
+                return reject("case non possédée");
+            }
+            if self.tiles[idx].kind != TileKind::Land {
+                return reject("on ne bâtit que sur la terre (sauf les ports)");
+            }
         }
         let (money_cost, mat_cost, housing_cost) = build_cost(building);
         let ni = self.ensure_nation(nation);
@@ -803,6 +837,7 @@ impl World {
         self.nations[ni].money -= money_cost;
         self.nations[ni].materials -= mat_cost;
         self.nations[ni].housing -= housing_cost;
+        self.tiles[idx].owner = Some(nation); // le port revendique la case d'eau
         self.tiles[idx].building = Some(building);
         // Fonder une ville amène des colons (amorce la croissance logistique).
         if building == Building::City && self.tiles[idx].population < CITY_SEED_POP {
@@ -1197,6 +1232,7 @@ impl World {
                 Some(proto::Building::Military) => 7,
                 Some(proto::Building::Farm) => 8,
                 Some(proto::Building::City) => 9,
+                Some(proto::Building::Port) => 10,
             };
             h = h.wrapping_mul(FNV_PRIME);
         }
@@ -1263,6 +1299,7 @@ pub fn build_cost(b: Building) -> (i64, i64, i64) {
         Building::Education => (150, 30, 0),
         Building::Military => (120, 40, 0),
         Building::Farm => (80, 15, 0),
+        Building::Port => (100, 30, 0),
     }
 }
 
@@ -1381,6 +1418,7 @@ mod tests {
         assert_eq!(build_cost(Building::Education), (150, 30, 0));
         assert_eq!(build_cost(Building::Military), (120, 40, 0));
         assert_eq!(build_cost(Building::Farm), (80, 15, 0));
+        assert_eq!(build_cost(Building::Port), (100, 30, 0));
     }
 
     #[test]

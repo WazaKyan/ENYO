@@ -451,6 +451,60 @@ fn farm_produces_food() {
 }
 
 #[test]
+fn port_buildable_only_on_coastal_water() {
+    let mut w = World::new(41, 60, 40);
+    let width = w.width;
+    let p = |x: u32, y: u32| (y * width + x) as usize;
+    // (5,5) terre possédée ; (6,5)(7,5)(8,5) océan.
+    w.tiles[p(5, 5)].kind = TileKind::Land;
+    for x in 6..9 {
+        w.tiles[p(x, 5)].kind = TileKind::Ocean;
+    }
+    w.apply(Command::Settle {
+        x: 5,
+        y: 5,
+        nation: 0,
+        population: 100,
+    });
+    let ni = w.nations.iter().position(|n| n.id == 0).unwrap();
+    w.nations[ni].money = 5000;
+    w.nations[ni].materials = 500;
+    // Port sur (6,5) : côte (adjacente à (5,5) terre possédée) -> OK, revendique l'eau.
+    let ev = w.apply(Command::Build {
+        x: 6,
+        y: 5,
+        nation: 0,
+        building: Building::Port,
+    });
+    assert!(matches!(ev[0], Event::Built { .. }), "port côtier: {:?}", ev[0]);
+    assert_eq!(w.tile(6, 5).owner, Some(0), "le port revendique la case d'eau");
+    // Port sur (8,5) : eau non côtière -> rejet.
+    let ev = w.apply(Command::Build {
+        x: 8,
+        y: 5,
+        nation: 0,
+        building: Building::Port,
+    });
+    assert!(matches!(ev[0], Event::CommandRejected { .. }), "port hors côte -> rejet");
+    // Port sur (5,5) : terre -> rejet (le port est sur l'eau).
+    let ev = w.apply(Command::Build {
+        x: 5,
+        y: 5,
+        nation: 0,
+        building: Building::Port,
+    });
+    assert!(matches!(ev[0], Event::CommandRejected { .. }), "port sur terre -> rejet");
+    // Industrie sur l'eau (7,5) -> rejet (on ne bâtit que sur la terre).
+    let ev = w.apply(Command::Build {
+        x: 7,
+        y: 5,
+        nation: 0,
+        building: Building::Industry,
+    });
+    assert!(matches!(ev[0], Event::CommandRejected { .. }), "bâtiment terrestre sur l'eau -> rejet");
+}
+
+#[test]
 fn demolish_refunds_scaled_and_allows_rebuild() {
     let mut w = World::new(31, 80, 60);
     let (x, y) = productive(&w);

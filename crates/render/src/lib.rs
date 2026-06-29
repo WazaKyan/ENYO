@@ -387,6 +387,7 @@ fn building_color(b: Building) -> [u8; 3] {
         Building::Education => [180, 96, 206],        // violet (savoir)
         Building::Military => [206, 64, 60],          // rouge (armée)
         Building::Farm => [216, 196, 70],             // jaune (récolte)
+        Building::Port => [120, 96, 64],              // brun (quais)
     }
 }
 
@@ -434,7 +435,21 @@ fn draw_building(img: &mut RgbImage, bx: u32, by: u32, px: u32, b: Building, pop
         Building::Infrastructure => draw_infra(img, bx, by, px),
         Building::Education => draw_school(img, bx, by, px),
         Building::Military => draw_fort(img, bx, by, px),
+        Building::Port => draw_port(img, bx, by, px),
     }
+}
+
+/// Port : un quai (planches) + un petit voilier (coque + mât + voile).
+fn draw_port(img: &mut RgbImage, bx: u32, by: u32, px: u32) {
+    let plank = [120, 96, 64];
+    let dark = [70, 54, 38];
+    let hull = [60, 60, 70];
+    let sail = [232, 232, 238];
+    frect(img, bx, by, px, 0.12, 0.62, 0.46, 0.12, plank); // quai
+    frect(img, bx, by, px, 0.12, 0.74, 0.46, 0.04, dark); // pilotis
+    frect(img, bx, by, px, 0.60, 0.58, 0.26, 0.10, hull); // coque
+    frect(img, bx, by, px, 0.71, 0.30, 0.03, 0.28, dark); // mât
+    frect(img, bx, by, px, 0.60, 0.34, 0.12, 0.20, sail); // voile
 }
 
 /// Ville : une silhouette de tours dont le nombre et la hauteur croissent avec la
@@ -761,7 +776,7 @@ pub fn building_sheet(px: u32) -> RgbImage {
     let px = px.max(16);
     let grass = sample(TileKind::Land, Biome::Grassland, 0.6);
     // (bâtiment, population) — la ville varie pour montrer ses paliers.
-    let items: [(Building, f32); 10] = [
+    let items: [(Building, f32); 11] = [
         (Building::City, 400.0),     // village
         (Building::City, 1200.0),    // bourg
         (Building::City, 2500.0),    // cité
@@ -772,6 +787,7 @@ pub fn building_sheet(px: u32) -> RgbImage {
         (Building::Infrastructure, 0.0),
         (Building::Education, 0.0),
         (Building::Military, 0.0),
+        (Building::Port, 0.0),
     ];
     let cols = 5u32;
     let gap = 6u32;
