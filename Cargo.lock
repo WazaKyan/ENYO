@@ -832,6 +832,7 @@ version = "0.0.1"
 dependencies = [
  "ai",
  "font8x8",
+ "llm",
  "minifb",
  "persist",
  "proto",

@@ -112,6 +112,41 @@ Les réductions `knowledge_gain[i] += dev * …` (`sim/src/lib.rs:587`) et les s
 
 ## 4. Cadence du Directeur LLM
 
+### 4.0 IMPLÉMENTÉ — version « intention » (raffine 4.2)
+
+Le Directeur réel suit l'**architecture intention** (plus invisible et robuste à la
+latence que des coups précis périssables) :
+
+- **`ai::Director`** (état **LIVE only**, jamais dans `World`/`.rec`) tient une
+  `ai::Intent { stance (Neutral|Pressure|Relief|ElevateRival), intensity 0..100,
+  until_turn, focus, public_cause, hidden_intent }`. Chaque tick, `resolve_tick`
+  **résout l'intention courante contre l'état COURANT** en leviers concrets
+  (`DirectorGrievance/Blight/Windfall`, montants ∝ intensité, cadencés à
+  `ACT_PERIOD = 3` mois). L'intention expirée est renouvelée par une **baseline
+  déterministe** (`Intent::baseline`, dérivée de l'Indice de Drame) → shippable
+  sans LLM.
+- **`llm::DirectorWorker`** (thread + `mpsc`, possède `DeepSeek`) : `request(DirectorView)`
+  (agrégat possédé, un seul en vol), `poll() -> Option<Result<Intent,String>>`,
+  `Drop` (ferme le canal + join). `llm::parse_intent` mappe le JSON → `ai::Intent`.
+- **Cadence (live)** : l'`ui` relance une requête au plus toutes `LLM_MIN_SECS = 18 s`
+  **murales** (latence-safe + coût ; ~3 appels/min ; ~60-100/partie), uniquement
+  si `speed > 0` et aucune requête en vol. Au `poll`, l'intention est **posée
+  sur le `Director`** (apply-on-arrival).
+- **Déterminisme** : on **n'horodate pas** le résultat (pas de tick-deadline fixe).
+  Justification : le LLM est externe → live ≠ rejeu **par nature** (déjà vrai en
+  tour-par-tour). Seuls les **leviers concrets** émis par `resolve_tick` passent
+  par `App::apply` et sont **enregistrés au tick courant** ⇒ le **rejeu les rejoue
+  tels quels, sans jamais rappeler DeepSeek ni le résolveur**. Vérifié : record →
+  replay **bit-identique** (`9e4cf32…`, `93302114…`). Le worker est `None` en
+  rejeu et en headless (baseline pure → reproductible).
+- **Audit** : `--debug-director` affiche un overlay (invisible au joueur) avec
+  `stance/intensity/focus`, **cause publique** vs **intention cachée**, et le
+  statut LLM. Worker créé seulement en jeu fenêtré (`enable_llm`) si une clé existe.
+
+> La 4.2 ci-dessous (tick-deadline fixe `T_apply`) reste une **alternative** si
+> l'on voulait un rejeu *reproduisant le live* sans enregistrer les leviers ; on
+> a préféré l'apply-on-arrival + enregistrement (plus simple, plus réactif).
+
 ### 4.1 Le problème
 
 `DeepSeek::chat` (`crates/llm/src/lib.rs:36`) est un **`curl` bloquant** (`--max-time 35`, `temperature 1.0`, `response_format json_object`) appelé **inline 1×/tour** — uniquement dans le `harness` aujourd'hui (`--director-llm`, `crates/harness/src/main.rs:125-128`). L'UI n'appelle même pas le LLM (`end_turn` utilise `ai::direct`, `ui/src/main.rs:539`). Bloquer jusqu'à 35 s par tick est rédhibitoire en temps réel.

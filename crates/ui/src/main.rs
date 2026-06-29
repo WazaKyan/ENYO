@@ -30,6 +30,9 @@ const BOT_H: i32 = 52;
 const BASE_TICK_US: i64 = 500_000;
 /// Garde anti-spirale : ticks max résolus en une frame (sinon orage de Step).
 const MAX_TICKS_PER_FRAME: u32 = 8;
+/// Intervalle mural minimal entre deux appels au Directeur LLM (latence + coût).
+/// Le rejeu ne dépend pas du mur : seuls les leviers concrets émis sont enregistrés.
+const LLM_MIN_SECS: u64 = 18;
 
 /// Période (µs) d'un tick selon la vitesse ; 0 = pause/max (gérés à part).
 fn tick_period_us(speed: u32) -> i64 {
@@ -224,6 +227,14 @@ struct App {
     replay_mode: bool,
     replay_cmds: Vec<Command>,
     replay_pos: usize,
+
+    // Directeur temps réel (version intention)
+    director: ai::Director,
+    director_worker: Option<llm::DirectorWorker>,
+    enable_llm: bool,
+    last_llm_request: Option<Instant>,
+    debug_director: bool,
+    director_status: String,
 }
 
 fn main() {
@@ -237,6 +248,7 @@ fn main() {
         return;
     }
     let mut app = App::new(&args);
+    app.enable_llm = true; // jeu fenêtré live : le Directeur LLM s'active si une clé existe
     if let Some(p) = args.replay.clone() {
         if !app.load_replay(&p) {
             return;
@@ -493,6 +505,12 @@ impl App {
             replay_mode: false,
             replay_cmds: Vec::new(),
             replay_pos: 0,
+            director: ai::Director::new(),
+            director_worker: None,
+            enable_llm: false,
+            last_llm_request: None,
+            debug_director: args.debug_director,
+            director_status: "baseline".to_string(),
         }
     }
 
@@ -523,6 +541,19 @@ impl App {
         self.world = Some(World::new(seed, 800, 500));
         self.spectator = spectator;
         self.replay_mode = false;
+        // Directeur : repart neuf ; worker LLM seulement en jeu live (avec clé).
+        self.director = ai::Director::new();
+        self.director_worker = if self.enable_llm {
+            llm::DeepSeek::from_env().map(llm::DirectorWorker::spawn)
+        } else {
+            None
+        };
+        self.last_llm_request = None;
+        self.director_status = if self.director_worker.is_some() {
+            "LLM actif".to_string()
+        } else {
+            "baseline".to_string()
+        };
         // Enregistrement auto (audit total) : la dernière partie est rejouable.
         self.recorder = None;
         let path = self
@@ -571,7 +602,11 @@ impl App {
         }
         let (player, nations, spec) = (self.player, self.config.nations, self.spectator);
         self.apply(Command::Step);
-        for c in ai::direct(self.world.as_ref().unwrap(), player) {
+        // Directeur : résout l'intention COURANTE contre l'état COURANT.
+        let dir_cmds = self
+            .director
+            .resolve_tick(self.world.as_ref().unwrap(), player);
+        for c in dir_cmds {
             self.apply(c);
         }
         for nid in 0..nations {
@@ -596,6 +631,7 @@ impl App {
         };
         self.replay_mode = true;
         self.recorder = None;
+        self.director_worker = None; // le rejeu ne consulte jamais le LLM
         self.config.seed = header.seed;
         let mut world = World::new(header.seed, header.width, header.height);
         // Applique la mise en place : tout ce qui précède le 1er Step (tour 0).
@@ -847,6 +883,45 @@ impl App {
                 if self.acc_us > period {
                     self.acc_us = 0; // garde anti-spirale : on jette le surplus
                 }
+            }
+        }
+
+        // Directeur LLM (asynchrone) : récolte un résultat, relance si dû.
+        if self.director_worker.is_some() {
+            let mut new_intent = None;
+            let mut status = None;
+            let mut fired = false;
+            if let Some(worker) = self.director_worker.as_ref() {
+                match worker.poll() {
+                    Some(Ok(intent)) => {
+                        status = Some(format!(
+                            "LLM {:?} i{} <<{}>>",
+                            intent.stance, intent.intensity, intent.public_cause
+                        ));
+                        new_intent = Some(intent);
+                    }
+                    Some(Err(e)) => status = Some(format!("LLM echec: {e}")),
+                    None => {}
+                }
+                let due = self
+                    .last_llm_request
+                    .map(|t| now.duration_since(t).as_secs() >= LLM_MIN_SECS)
+                    .unwrap_or(true);
+                if self.speed > 0 && due && !worker.busy() {
+                    if let Some(world) = self.world.as_ref() {
+                        let view = llm::DirectorView::from_world(world, self.player);
+                        fired = worker.request(view);
+                    }
+                }
+            }
+            if let Some(i) = new_intent {
+                self.director.set_intent(i);
+            }
+            if let Some(s) = status {
+                self.director_status = s;
+            }
+            if fired {
+                self.last_llm_request = Some(now);
             }
         }
 
@@ -1270,6 +1345,29 @@ impl App {
                 c.text(w - 10 - tw, h - BOT_H - 22, &self.last_msg, 2, col);
             }
 
+            // Overlay d'AUDIT du Directeur (invisible au joueur ; --debug-director).
+            if self.debug_director {
+                let it = self.director.intent();
+                let lines = [
+                    format!("DIRECTEUR [audit] - {}", self.director_status),
+                    format!(
+                        "intention: {:?}  i{}  focus {:?}  jusqu'au mois {}",
+                        it.stance, it.intensity, it.focus, it.until_turn
+                    ),
+                    format!("cause publique : {}", it.public_cause),
+                    format!("intention cachee: {}", it.hidden_intent),
+                ];
+                let pw = 600;
+                let ph = lines.len() as i32 * 16 + 12;
+                let x0d = 10;
+                let y0d = TOP_H + 8;
+                c.blend_rect(x0d, y0d, pw, ph, gui::PANEL, 230);
+                c.rect_outline(x0d, y0d, pw, ph, gui::WARN);
+                for (i, l) in lines.iter().enumerate() {
+                    c.text(x0d + 8, y0d + 6 + i as i32 * 16, l, 1, gui::TEXT);
+                }
+            }
+
             // Panneau de la case inspectée.
             if let (Some((tx, ty)), Some(world)) = (self.selected, self.world.as_ref()) {
                 let t = world.tile(tx, ty);
@@ -1395,6 +1493,7 @@ struct Args {
     out: Option<String>,
     record: Option<String>,
     replay: Option<String>,
+    debug_director: bool,
 }
 
 impl Args {
@@ -1414,6 +1513,7 @@ impl Args {
             out: None,
             record: None,
             replay: None,
+            debug_director: false,
         };
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
@@ -1436,6 +1536,7 @@ impl Args {
                 "--out" => a.out = it.next(),
                 "--record" => a.record = it.next(),
                 "--replay" => a.replay = it.next(),
+                "--debug-director" => a.debug_director = true,
                 other => eprintln!("argument ignoré : {other}"),
             }
         }

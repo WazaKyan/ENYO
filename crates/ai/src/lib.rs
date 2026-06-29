@@ -14,6 +14,9 @@ use sim::nation::{ESSOR, LIEN, TERROIR};
 use sim::tile::TileKind;
 use sim::World;
 
+mod director;
+pub use director::{Director, Intent, Stance};
+
 /// Branches que l'IA fait progresser (Fer = militaire, géré via la mobilisation).
 const AI_BRANCHES: [usize; 3] = [TERROIR, ESSOR, LIEN];
 
@@ -198,16 +201,16 @@ const DIRECTOR_BLIGHT: u32 = 25;
 const DIRECTOR_RELIEF: u32 = 30;
 
 /// Indice de Drame : lecture déterministe de l'« intérêt » pour le joueur.
-struct Drama {
-    nations: usize,
-    dominance: f32,
-    struggling: bool,
-    strongest_rival: Option<u16>,
-    player_best_tile: Option<(u32, u32)>,
-    player_worst_tile: Option<(u32, u32)>,
+pub(crate) struct Drama {
+    pub(crate) nations: usize,
+    pub(crate) dominance: f32,
+    pub(crate) struggling: bool,
+    pub(crate) strongest_rival: Option<u16>,
+    pub(crate) player_best_tile: Option<(u32, u32)>,
+    pub(crate) player_worst_tile: Option<(u32, u32)>,
 }
 
-fn assess(world: &World, player: u16) -> Drama {
+pub(crate) fn assess(world: &World, player: u16) -> Drama {
     let mut total = 0.0f32;
     let mut player_pop = 0.0f32;
     let mut best_other = 0.0f32;
