@@ -140,10 +140,6 @@ impl World {
         y as usize * self.width as usize + x as usize
     }
 
-    /// Coordonnées (x, y) d'un index linéaire.
-    fn coords(&self, idx: usize) -> (u32, u32) {
-        (idx as u32 % self.width, idx as u32 / self.width)
-    }
 
     /// Référence vers la case (x, y).
     pub fn tile(&self, x: u32, y: u32) -> &Tile {
@@ -210,18 +206,6 @@ impl World {
                 to_y,
             } => self.swarm(from_x, from_y, to_x, to_y),
             Command::Research { nation, branch } => self.research(nation, branch),
-            Command::Mobilize {
-                x,
-                y,
-                nation,
-                amount,
-            } => self.mobilize(x, y, nation, amount),
-            Command::March {
-                from_x,
-                from_y,
-                to_x,
-                to_y,
-            } => self.march(from_x, from_y, to_x, to_y),
             Command::Build {
                 x,
                 y,
@@ -384,133 +368,6 @@ impl World {
         }]
     }
 
-    /// Mobilisation (S5) : convertit de la population en force sur une case possédée.
-    fn mobilize(&mut self, x: u32, y: u32, nation: u16, amount: u32) -> Vec<Event> {
-        if x >= self.width || y >= self.height {
-            return reject("hors carte");
-        }
-        let idx = self.index(x, y);
-        if self.tiles[idx].owner != Some(nation) {
-            return reject("case non possédée");
-        }
-        let t = &mut self.tiles[idx];
-        let m = (amount as f32).min(t.population);
-        if m <= 0.0 {
-            return reject("population insuffisante");
-        }
-        t.population -= m;
-        t.force += m;
-        vec![Event::Mobilized {
-            nation,
-            x,
-            y,
-            amount: m,
-        }]
-    }
-
-    /// Marche / attaque (S5) : déplace toute la force vers une case adjacente.
-    fn march(&mut self, fx: u32, fy: u32, tx: u32, ty: u32) -> Vec<Event> {
-        if fx >= self.width || fy >= self.height || tx >= self.width || ty >= self.height {
-            return reject("hors carte");
-        }
-        if !self.is_adjacent(fx, fy, tx, ty) {
-            return reject("cible non adjacente");
-        }
-        let from = self.index(fx, fy);
-        let to = self.index(tx, ty);
-        let nation = match self.tiles[from].owner {
-            Some(o) => o,
-            None => return reject("source non possédée"),
-        };
-        let force = self.tiles[from].force;
-        if force <= 0.0 {
-            return reject("aucune force à déplacer");
-        }
-        if self.tiles[to].kind != TileKind::Land {
-            return reject("cible aquatique");
-        }
-
-        match self.tiles[to].owner {
-            None => self.move_force(from, to, nation, force),
-            Some(o) if o == nation => self.move_force(from, to, nation, force),
-            Some(defender) => {
-                if !self.diplomacy.at_war(nation, defender) {
-                    return reject("pas en guerre avec la cible");
-                }
-                self.resolve_battle(from, to, nation, defender, force)
-            }
-        }
-    }
-
-    /// Déplacement pacifique de force (case amie ou libre).
-    fn move_force(&mut self, from: usize, to: usize, nation: u16, force: f32) -> Vec<Event> {
-        self.tiles[from].force = 0.0;
-        self.tiles[to].force += force;
-        let (from_x, from_y) = self.coords(from);
-        let (to_x, to_y) = self.coords(to);
-        vec![Event::Marched {
-            nation,
-            from_x,
-            from_y,
-            to_x,
-            to_y,
-            force,
-        }]
-    }
-
-    /// Résolution déterministe d'un combat sur la case `to`.
-    fn resolve_battle(
-        &mut self,
-        from: usize,
-        to: usize,
-        attacker: u16,
-        defender: u16,
-        force: f32,
-    ) -> Vec<Event> {
-        let (tx, ty) = self.coords(to);
-        self.tiles[from].force = 0.0; // la force est engagée
-
-        let d_force = self.tiles[to].force;
-        let defense_bonus = self.tiles[to].ruggedness * 30.0 + self.tiles[to].population * 0.2;
-        let resistance = d_force + defense_bonus;
-
-        let conquered;
-        let attacker_losses;
-        let defender_losses;
-        if force > resistance {
-            // Conquête : la résistance est balayée, l'attaquant occupe la case.
-            let remaining = force - resistance;
-            let t = &mut self.tiles[to];
-            t.owner = Some(attacker);
-            t.force = remaining;
-            t.population *= 0.7; // mise à sac
-            t.devastation = (t.devastation + 0.4).clamp(0.0, 1.0);
-            conquered = true;
-            attacker_losses = resistance;
-            defender_losses = d_force;
-        } else {
-            // Repoussé : le bonus de terrain encaisse, puis la force défensive.
-            let force_damage = (force - defense_bonus).max(0.0);
-            let new_force = (d_force - force_damage).max(0.0);
-            let t = &mut self.tiles[to];
-            t.force = new_force;
-            t.devastation = (t.devastation + 0.2).clamp(0.0, 1.0);
-            conquered = false;
-            attacker_losses = force;
-            defender_losses = d_force - new_force;
-        }
-
-        vec![Event::BattleResolved {
-            attacker,
-            defender,
-            x: tx,
-            y: ty,
-            conquered,
-            attacker_losses,
-            defender_losses,
-        }]
-    }
-
     /// Déclare la guerre (S6).
     fn declare_war(&mut self, nation: u16, target: u16) -> Vec<Event> {
         if nation == target {
@@ -555,15 +412,6 @@ impl World {
         t.soil_fertility = (t.soil_fertility + a * 0.5).min(1.0);
         t.precipitation = (t.precipitation + a * 0.5).min(1.0);
         vec![Event::Windfall { x, y, amount: a }]
-    }
-
-    /// (fx,fy) et (tx,ty) sont-elles adjacentes (4-connexité, X enroulé) ?
-    fn is_adjacent(&self, fx: u32, fy: u32, tx: u32, ty: u32) -> bool {
-        let w = self.width as i64;
-        let dxa = (fx as i64 - tx as i64).abs();
-        let dx = dxa.min(w - dxa);
-        let dy = (fy as i64 - ty as i64).abs();
-        dx + dy == 1
     }
 
     /// Résout un tour : météo + biosphère, dynamiques anthropiques (S1), puis

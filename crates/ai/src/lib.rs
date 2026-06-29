@@ -50,30 +50,11 @@ pub fn plan(world: &World, nation: u16) -> Vec<Command> {
     cmds.extend(expansion(world, nation));
 
     // Diplomatie : déclarer la guerre à la nation la plus haïe (grief élevé).
+    // (Le combat passe désormais par les UNITÉS, recrutées aux casernes — l'IA
+    // militaire « unités » viendra dans une tranche dédiée.)
     if let Some((target, amount)) = world.diplomacy.top_grievance(nation) {
         if amount >= WAR_THRESHOLD && !world.diplomacy.at_war(nation, target) {
             cmds.push(Command::DeclareWar { nation, target });
-        }
-    }
-
-    // Guerre : mobiliser puis attaquer une case frontalière ennemie.
-    if let Some((from, to)) = find_attack(world, nation) {
-        let amount = (world.tiles[from].population * 0.4) as u32;
-        if amount > 0 {
-            let (fx, fy) = coords(from, world.width);
-            let (tx, ty) = coords(to, world.width);
-            cmds.push(Command::Mobilize {
-                x: fx,
-                y: fy,
-                nation,
-                amount,
-            });
-            cmds.push(Command::March {
-                from_x: fx,
-                from_y: fy,
-                to_x: tx,
-                to_y: ty,
-            });
         }
     }
 
@@ -178,33 +159,6 @@ fn economy(world: &World, nation: u16) -> Vec<Command> {
         nation,
         building: pick,
     }]
-}
-
-/// Trouve une case (source ≥1000 hab.) frontalière d'une case ennemie en guerre.
-fn find_attack(world: &World, nation: u16) -> Option<(usize, usize)> {
-    let w = world.width as i64;
-    let h = world.height as i64;
-    for (idx, t) in world.tiles.iter().enumerate() {
-        if t.owner != Some(nation) || t.population < 1000.0 {
-            continue;
-        }
-        let x = idx as i64 % w;
-        let y = idx as i64 / w;
-        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
-            let nx = (x + dx).rem_euclid(w);
-            let ny = y + dy;
-            if ny < 0 || ny >= h {
-                continue;
-            }
-            let v = (ny * w + nx) as usize;
-            if let Some(m) = world.tiles[v].owner {
-                if m != nation && world.diplomacy.at_war(nation, m) {
-                    return Some((idx, v));
-                }
-            }
-        }
-    }
-    None
 }
 
 /// Capacité minimale d'une case « accueillante » : la ville de départ peut alors

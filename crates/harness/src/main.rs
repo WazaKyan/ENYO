@@ -372,7 +372,7 @@ fn run_replay(path: &str) {
 fn run_repl(world: &mut World) {
     println!(
         "REPL ENYO. Commandes : step [n] | settle x y [pop] | swarm fx fy tx ty | \
-         research nat br | mobilize x y amt | march fx fy tx ty | war a b | peace a b | \
+         research nat br | war a b | peace a b | \
          inspect x y | capacity x y | nation id | checksum | quit"
     );
     let stdin = io::stdin();
@@ -406,24 +406,6 @@ fn run_repl(world: &mut World) {
             ["settle", x, y, pop] => emit(apply_settle(world, x, y, pop)),
             ["swarm", a, b, c, d] => match (u(a), u(b), u(c), u(d)) {
                 (Some(fx), Some(fy), Some(tx), Some(ty)) => emit(world.apply(Command::Swarm {
-                    from_x: fx,
-                    from_y: fy,
-                    to_x: tx,
-                    to_y: ty,
-                })),
-                _ => println!("coordonnées invalides"),
-            },
-            ["mobilize", x, y, amt] => match (u(x), u(y), u(amt)) {
-                (Some(x), Some(y), Some(a)) => emit(world.apply(Command::Mobilize {
-                    x,
-                    y,
-                    nation: 0,
-                    amount: a,
-                })),
-                _ => println!("arguments invalides"),
-            },
-            ["march", a, b, c, d] => match (u(a), u(b), u(c), u(d)) {
-                (Some(fx), Some(fy), Some(tx), Some(ty)) => emit(world.apply(Command::March {
                     from_x: fx,
                     from_y: fy,
                     to_x: tx,

@@ -61,8 +61,6 @@ enum Tool {
     None,
     Found,
     Swarm,
-    Mobilize,
-    March,
     War,
     Peace,
     /// Bâtir un bâtiment (S8) sur la case cliquée.
@@ -87,7 +85,7 @@ enum Category {
 fn category_of(t: Tool) -> Option<Category> {
     match t {
         Tool::Found | Tool::Swarm => Some(Category::Economy),
-        Tool::Mobilize | Tool::March | Tool::Create(_) | Tool::Units => Some(Category::Military),
+        Tool::Create(_) | Tool::Units => Some(Category::Military),
         Tool::War | Tool::Peace => Some(Category::Diplomacy),
         Tool::Build(Building::Military) => Some(Category::Military),
         Tool::Build(_) => Some(Category::Economy),
@@ -512,12 +510,12 @@ fn run_audit(args: &Args) {
     let p = center_of(&app.game_buttons(w, h), GameBtn::Research(0));
     a.step(&mut app, &Input::click_at(p.0, p.1), "recherche_essor");
 
-    // --- Sous-menu Militaire : Mobiliser sur la case centrale (du joueur). ---
+    // --- Sous-menu Militaire : outil de contrôle des unités. ---
     let p = center_of(&app.game_buttons(w, h), GameBtn::Cat(Category::Military));
     a.step(&mut app, &Input::click_at(p.0, p.1), "menu_militaire");
-    let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::Mobilize));
-    a.step(&mut app, &Input::click_at(p.0, p.1), "outil_mobiliser");
-    a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "mobiliser_case");
+    let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::Units));
+    a.step(&mut app, &Input::click_at(p.0, p.1), "outil_unites");
+    a.step(&mut app, &Input::click_at(map_pt.0, map_pt.1), "unites_clic");
 
     // Inspecter une case (panneau).
     let p = center_of(&app.game_buttons(w, h), GameBtn::Tool(Tool::None));
@@ -901,8 +899,7 @@ impl App {
                 (Key::F, Tool::Found),
                 (Key::E, Tool::Swarm),
                 (Key::N, Tool::None),
-                (Key::M, Tool::Mobilize),
-                (Key::B, Tool::March),
+                (Key::M, Tool::Units),
                 (Key::G, Tool::War),
                 (Key::P, Tool::Peace),
                 (Key::I, Tool::Build(Building::Industry)),
@@ -1125,14 +1122,7 @@ impl App {
             return; // en rejeu : inspection seulement
         }
         let player = self.player;
-        let (pop, owner) = self
-            .world
-            .as_ref()
-            .map(|w| {
-                let t = w.tile(tx, ty);
-                (t.population, t.owner)
-            })
-            .unwrap_or((0.0, None));
+        let owner = self.world.as_ref().and_then(|w| w.tile(tx, ty).owner);
         match self.tool {
             Tool::Found => {
                 let ev = self.apply(Command::Settle {
@@ -1155,30 +1145,6 @@ impl App {
                 } else {
                     self.pending_src = Some((tx, ty));
                     self.last_msg = format!("source expansion ({tx},{ty}) - clique la cible");
-                }
-            }
-            Tool::Mobilize => {
-                let amount = (pop * 0.5) as u32;
-                let ev = self.apply(Command::Mobilize {
-                    x: tx,
-                    y: ty,
-                    nation: player,
-                    amount,
-                });
-                self.report(&ev);
-            }
-            Tool::March => {
-                if let Some((sx, sy)) = self.pending_src.take() {
-                    let ev = self.apply(Command::March {
-                        from_x: sx,
-                        from_y: sy,
-                        to_x: tx,
-                        to_y: ty,
-                    });
-                    self.report(&ev);
-                } else {
-                    self.pending_src = Some((tx, ty));
-                    self.last_msg = format!("source marche ({tx},{ty}) - clique la cible");
                 }
             }
             Tool::War => match owner {
@@ -1390,8 +1356,6 @@ impl App {
                     push_tool(&mut v, &mut x, "Archers", Tool::Create(UnitKind::Archer));
                     push_tool(&mut v, &mut x, "Cavalerie", Tool::Create(UnitKind::Cavalry));
                     push_tool(&mut v, &mut x, "Caserne", Tool::Build(Building::Military));
-                    push_tool(&mut v, &mut x, "Mobiliser", Tool::Mobilize);
-                    push_tool(&mut v, &mut x, "Marcher", Tool::March);
                 }
                 Category::Diplomacy => {
                     push_tool(&mut v, &mut x, "Guerre", Tool::War);
@@ -1538,8 +1502,6 @@ impl App {
             Tool::None => "Inspecter",
             Tool::Found => "Fonder",
             Tool::Swarm => "Étendre",
-            Tool::Mobilize => "Mobiliser",
-            Tool::March => "Marcher",
             Tool::War => "Guerre",
             Tool::Peace => "Paix",
             Tool::Build(Building::City) => "Ville",
@@ -1720,6 +1682,15 @@ fn building_fr(b: Building) -> &'static str {
     }
 }
 
+/// Nom français d'un type d'unité.
+fn unit_fr(k: UnitKind) -> &'static str {
+    match k {
+        UnitKind::Infantry => "Infanterie",
+        UnitKind::Archer => "Archers",
+        UnitKind::Cavalry => "Cavalerie",
+    }
+}
+
 /// Traduit le résultat d'une commande joueur en message court (succès ou rejet).
 fn feedback(events: &[Event]) -> Option<String> {
     for e in events {
@@ -1738,24 +1709,24 @@ fn feedback(events: &[Event]) -> Option<String> {
                     .unwrap_or("?");
                 return Some(format!("{b} palier {tier}"));
             }
-            Event::Mobilized { x, y, amount, .. } => {
-                return Some(format!("mobilise ({x},{y}) +{amount:.0} force"))
+            Event::UnitCreated { kind, x, y, .. } => {
+                return Some(format!("recrute {} ({x},{y})", unit_fr(*kind)))
             }
-            Event::Marched {
-                to_x, to_y, force, ..
-            } => return Some(format!("marche vers ({to_x},{to_y}) {force:.0} force")),
-            Event::BattleResolved {
+            Event::UnitMoved { to_x, to_y, .. } => {
+                return Some(format!("unite -> ({to_x},{to_y})"))
+            }
+            Event::UnitAttacked {
                 x,
                 y,
-                conquered,
-                attacker_losses,
-                defender_losses,
+                damage,
+                killed,
                 ..
             } => {
-                let issue = if *conquered { "conquise" } else { "repoussee" };
-                return Some(format!(
-                    "bataille ({x},{y}) {issue} (pertes {attacker_losses:.0}/{defender_losses:.0})"
-                ));
+                let k = if *killed { " (detruite)" } else { "" };
+                return Some(format!("attaque ({x},{y}) -{damage} PV{k}"));
+            }
+            Event::UnitDestroyed { x, y, .. } => {
+                return Some(format!("unite detruite ({x},{y})"))
             }
             Event::WarDeclared { target, .. } => {
                 return Some(format!("GUERRE declaree a N{target}"))

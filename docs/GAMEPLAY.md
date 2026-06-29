@@ -36,9 +36,10 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 > l'influence) ; il déplace toujours des colons (main-d'œuvre). Modèle et calibrage
 > **faisant autorité** : `docs/ECONOMY.md` § RÉVISION.
 
-> **Révision militaire (S5) — UNITÉS.** En plus de la `force` (stat de case, levée
-> brute via Mobiliser/Marcher), on a des **unités** : des **agents discrets**
-> (position, PV, dégâts, portée, points de mouvement) recrutés aux **casernes**.
+> **Révision militaire (S5) — UNITÉS.** **Tout le militaire passe par les unités**
+> (Mobiliser/Marcher retirés) : la `force` (stat de case produite par les casernes)
+> ne sert plus qu'à **recruter des unités** — des **agents discrets** (position, PV,
+> dégâts, portée, points de mouvement).
 > Recruter coûte **argent + force** ; les **types** (Infanterie, Archers, Cavalerie)
 > sont débloqués par la branche **Fer**. Les **points de mouvement** dépendent du
 > terrain ET des **intempéries** (pluie/dévastation/gel ralentissent — primitive
