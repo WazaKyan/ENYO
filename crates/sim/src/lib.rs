@@ -143,6 +143,17 @@ pub struct World {
     /// (gros gain de perf par tick). Reconstruit après un chargement de snapshot.
     #[serde(skip)]
     owned_index: HashMap<u16, Vec<usize>>,
+    /// Calculer le **checksum d'audit** à chaque tour (dans l'événement `TurnResolved`).
+    /// Coûteux (hash des 400k cases / tick) et **inutile en jeu live** (le rejeu le
+    /// recalcule depuis les commandes). L'UI le désactive pour fluidifier ; harness,
+    /// rejeu et tests le gardent (audit complet). Non sérialisé, défaut = vrai.
+    #[serde(skip_serializing, default = "checksum_on")]
+    audit_checksum: bool,
+}
+
+/// Défaut du drapeau d'audit (vrai) — utilisé à la désérialisation des snapshots.
+fn checksum_on() -> bool {
+    true
 }
 
 impl World {
@@ -164,7 +175,14 @@ impl World {
             next_unit_id: 1,
             cargo: BTreeMap::new(),
             owned_index: HashMap::new(),
+            audit_checksum: true,
         }
+    }
+
+    /// Active/désactive le calcul du checksum d'audit par tour. L'UI le coupe en jeu
+    /// live (perf) ; le déterminisme reste garanti par le rejeu des commandes.
+    pub fn set_audit_checksum(&mut self, on: bool) {
+        self.audit_checksum = on;
     }
 
     /// Ajoute une case à l'index des cases possédées, en maintenant l'ordre d'index
@@ -580,7 +598,9 @@ impl World {
         let count = width as f64 * height as f64;
         let avg_temperature = (temp_sum / count) as f32;
         let avg_vegetation = (veg_sum / count) as f32;
-        let checksum = self.checksum();
+        // Checksum d'audit : sauté en jeu live (UI) — coûteux (400k cases) et inutile
+        // là (le rejeu des commandes le recalcule). Gardé pour harness/rejeu/tests.
+        let checksum = if self.audit_checksum { self.checksum() } else { 0 };
         tracing::debug!(
             turn = self.turn,
             month,

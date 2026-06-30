@@ -627,7 +627,11 @@ impl App {
 
     fn start_game(&mut self, spectator: bool) {
         let seed = self.config.seed;
-        self.world = Some(World::new(seed, 800, 500));
+        let mut world = World::new(seed, 800, 500);
+        // Jeu live : pas de checksum d'audit par tick (perf) — le rejeu des
+        // commandes le recalcule au besoin (déterminisme préservé).
+        world.set_audit_checksum(false);
+        self.world = Some(world);
         self.spectator = spectator;
         self.replay_mode = false;
         // Directeur : repart neuf ; worker LLM seulement en jeu live (avec clé).
@@ -725,6 +729,7 @@ impl App {
         self.director_worker = None; // le rejeu ne consulte jamais le LLM
         self.config.seed = header.seed;
         let mut world = World::new(header.seed, header.width, header.height);
+        world.set_audit_checksum(false); // lecture visuelle d'un rejeu : pas d'audit (perf)
         // Applique la mise en place : tout ce qui précède le 1er Step (tour 0).
         let mut pos = 0;
         while pos < cmds.len() && !matches!(cmds[pos], Command::Step) {
@@ -787,6 +792,7 @@ impl App {
     fn ensure_menu_world(&mut self) {
         if self.menu_world.is_none() {
             let mut world = World::new(self.config.seed, 800, 500);
+            world.set_audit_checksum(false); // aperçu du menu : pas d'audit (perf)
             for c in ai::spawn_nations(&world, self.config.nations, self.player) {
                 world.apply(c);
             }

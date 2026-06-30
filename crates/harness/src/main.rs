@@ -41,6 +41,9 @@ fn main() {
         Some(snap) => persist::load_snapshot(snap).expect("chargement du snapshot"),
         None => World::new(args.seed, args.width, args.height),
     };
+    if args.no_checksum {
+        world.set_audit_checksum(false); // mesure perf : comme en jeu live (UI)
+    }
     tracing::info!(
         seed = world.seed,
         width = world.width,
@@ -506,6 +509,7 @@ struct Args {
     director_llm: bool,
     player: u16,
     audit: bool,
+    no_checksum: bool,
     png: Option<String>,
     png_scale: u32,
     region: Option<String>,
@@ -542,6 +546,7 @@ impl Args {
             director_llm: false,
             player: 0,
             audit: false,
+            no_checksum: false,
             png: None,
             png_scale: 2,
             region: None,
@@ -604,6 +609,7 @@ impl Args {
                 "--director" => a.director = true,
                 "--director-llm" => a.director_llm = true,
                 "--audit" => a.audit = true,
+                "--no-checksum" => a.no_checksum = true,
                 "--png" => a.png = it.next(),
                 "--png-scale" => {
                     if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
