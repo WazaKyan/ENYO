@@ -130,7 +130,8 @@ enum GameBtn {
     Tool(Tool),
     /// Ouvre un sous-menu (catégorie).
     Cat(Category),
-    Research(u8),
+    /// Débloque la techno d'id donné (frontière recherchable de l'arbre).
+    Research(u16),
     Speed(u32),
 }
 
@@ -515,11 +516,12 @@ fn run_audit(args: &Args) {
     app.advance();
     a.snap(&mut app, "industrie_apres_tour");
 
-    // --- Sous-menu Technologie : recherche Essor (succès OU rejet « savoir »). ---
+    // --- Sous-menu Technologie : recherche Agriculture (id 0, racine de l'arbre ;
+    // succès OU rejet « savoir »). ---
     let p = center_of(&app.game_buttons(w, h), GameBtn::Cat(Category::Tech));
     a.step(&mut app, &Input::click_at(p.0, p.1), "menu_technologie");
     let p = center_of(&app.game_buttons(w, h), GameBtn::Research(0));
-    a.step(&mut app, &Input::click_at(p.0, p.1), "recherche_essor");
+    a.step(&mut app, &Input::click_at(p.0, p.1), "recherche_agriculture");
 
     // --- Sous-menu Militaire : outil de contrôle des unités. ---
     let p = center_of(&app.game_buttons(w, h), GameBtn::Cat(Category::Military));
@@ -988,14 +990,29 @@ impl App {
                 }
             }
             if !self.spectator {
-                for (k, b) in [
-                    (Key::Key1, 0u8),
+                // Touches 1-4 : débloque la Nième techno de la frontière recherchable
+                // (prérequis acquis), triée par âge puis id — raccourci de l'arbre.
+                for (k, slot) in [
+                    (Key::Key1, 0usize),
                     (Key::Key2, 1),
                     (Key::Key3, 2),
                     (Key::Key4, 3),
                 ] {
                     if input.key_pressed(k) {
-                        self.research(b);
+                        let mask = self
+                            .world
+                            .as_ref()
+                            .and_then(|w| w.nation(self.player))
+                            .map(|n| n.techs)
+                            .unwrap_or(0);
+                        let mut avail: Vec<&sim::tech::Tech> = sim::tech::TREE
+                            .iter()
+                            .filter(|t| sim::tech::can_research(mask, t.id))
+                            .collect();
+                        avail.sort_by_key(|t| (t.age, t.id));
+                        if let Some(t) = avail.get(slot) {
+                            self.research(t.id);
+                        }
                     }
                 }
             }
@@ -1139,11 +1156,11 @@ impl App {
         }
     }
 
-    fn research(&mut self, branch: u8) {
+    fn research(&mut self, tech: u16) {
         let player = self.player;
         let ev = self.apply(Command::Research {
             nation: player,
-            branch,
+            tech,
         });
         if let Some(m) = feedback(&ev) {
             self.last_msg = m;
@@ -1528,9 +1545,24 @@ impl App {
                     push_tool(&mut v, &mut x, "Paix", Tool::Peace);
                 }
                 Category::Tech => {
-                    for (i, lbl) in ["Essor", "Terroir", "Fer", "Lien"].iter().enumerate() {
-                        let bw = gui::text_w(lbl, 2) + 18;
-                        v.push((GameBtn::Research(i as u8), Button::new(x, row2, bw, tbh, *lbl)));
+                    // Frontière RECHERCHABLE de l'arbre : les technos dont les
+                    // prérequis sont acquis (triées âge puis id). Cliquer en débloque
+                    // une ; de nouvelles apparaissent. Plafonné à ce qui tient.
+                    let mask = self
+                        .world
+                        .as_ref()
+                        .and_then(|w| w.nation(self.player))
+                        .map(|n| n.techs)
+                        .unwrap_or(0);
+                    let mut avail: Vec<&sim::tech::Tech> = sim::tech::TREE
+                        .iter()
+                        .filter(|t| sim::tech::can_research(mask, t.id))
+                        .collect();
+                    avail.sort_by_key(|t| (t.age, t.id));
+                    for t in avail.into_iter().take(8) {
+                        let lbl = format!("{} ({})", t.name, t.cost as i64);
+                        let bw = gui::text_w(&lbl, 2) + 18;
+                        v.push((GameBtn::Research(t.id), Button::new(x, row2, bw, tbh, &lbl)));
                         x += bw + 6;
                     }
                 }
@@ -1684,12 +1716,12 @@ impl App {
             Tool::Create(UnitKind::Galley) => "Galere",
             Tool::Units => "Unites",
         };
-        let tech = self
+        let ntech = self
             .world
             .as_ref()
             .and_then(|w| w.nation(self.player))
-            .map(|n| n.tech)
-            .unwrap_or_default();
+            .map(|n| n.techs.count_ones())
+            .unwrap_or(0);
         {
             let mut c = Canvas::new(&mut buf, uw, uh);
             // Surbrillance de la case sélectionnée / source d'expansion.
@@ -1751,20 +1783,13 @@ impl App {
             let spd = speed_label(self.speed);
             let mode_line = if self.replay_mode {
                 format!(
-                    "REJEU [{spd}]  -  {} / {} commandes  -  tech E{} T{} F{} L{}",
+                    "REJEU [{spd}]  -  {} / {} commandes  -  {ntech} techs",
                     self.replay_pos,
                     self.replay_cmds.len(),
-                    tech[0],
-                    tech[1],
-                    tech[2],
-                    tech[3]
                 )
             } else {
                 let mode = if self.spectator { "SPECTATEUR" } else { "JEU" };
-                format!(
-                    "Mode {mode} [{spd}]  -  outil: {toolname}  -  tech E{} T{} F{} L{}",
-                    tech[0], tech[1], tech[2], tech[3]
-                )
+                format!("Mode {mode} [{spd}]  -  outil: {toolname}  -  {ntech} techs")
             };
             c.text(10, h - BOT_H - 22, &mode_line, 2, gui::TEXT_DIM);
 
@@ -1781,10 +1806,23 @@ impl App {
                 if hover {
                     let tip = match id {
                         GameBtn::Tool(t) => tool_tooltip(*t),
-                        GameBtn::Research(_) => Some(vec![
-                            "Recherche".to_string(),
-                            "Depense de la science pour monter un palier de tech.".to_string(),
-                        ]),
+                        GameBtn::Research(tid) => sim::tech::get(*tid).map(|t| {
+                            let prereqs: Vec<&str> = t
+                                .prereqs
+                                .iter()
+                                .filter_map(|&p| sim::tech::get(p).map(|x| x.name))
+                                .collect();
+                            let req = if prereqs.is_empty() {
+                                "aucun prerequis".to_string()
+                            } else {
+                                format!("requiert : {}", prereqs.join(", "))
+                            };
+                            vec![
+                                format!("{} - age {} - {} savoir", t.name, t.age, t.cost as i64),
+                                t.blurb.to_string(),
+                                req,
+                            ]
+                        }),
                         _ => None,
                     };
                     if tip.is_some() {
@@ -1956,10 +1994,14 @@ fn tool_tooltip(t: Tool) -> Option<Vec<String>> {
             vec![
                 unit_fr(k).to_string(),
                 unit_role(k).to_string(),
-                format!(
-                    "Cout: {} argent + {} force (tech Fer {})",
-                    s.cost_money, s.cost_force, s.tech_fer
-                ),
+                {
+                    let req = match k {
+                        UnitKind::Archer => " (tech Bronze)",
+                        UnitKind::Cavalry => " (tech Forge)",
+                        _ => "",
+                    };
+                    format!("Cout: {} argent + {} force{req}", s.cost_money, s.cost_force)
+                },
                 format!(
                     "PV {} - degats {} - portee {} - mouvement {}",
                     s.max_hp, s.damage, s.range, s.moves
@@ -2048,12 +2090,9 @@ fn feedback(events: &[Event]) -> Option<String> {
             Event::Swarmed { to_x, to_y, .. } => {
                 return Some(format!("territoire étendu en ({to_x},{to_y})"))
             }
-            Event::Researched { branch, tier, .. } => {
-                let b = ["Essor", "Terroir", "Fer", "Lien"]
-                    .get(*branch as usize)
-                    .copied()
-                    .unwrap_or("?");
-                return Some(format!("{b} palier {tier}"));
+            Event::Researched { tech, .. } => {
+                let name = sim::tech::get(*tech).map(|t| t.name).unwrap_or("?");
+                return Some(format!("recherche : {name}"));
             }
             Event::UnitCreated { kind, x, y, .. } => {
                 return Some(format!("recrute {} ({x},{y})", unit_fr(*kind)))

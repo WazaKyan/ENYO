@@ -4,9 +4,11 @@
 
 use ai::plan;
 use proto::{Building, Command};
-use sim::nation::FER;
 use sim::tile::TileKind;
 use sim::World;
+
+/// Bronze (id 3 de l'arbre de tech) débloque les Archers.
+const BRONZE: u16 = 3;
 
 fn idx(w: &World, x: u32, y: u32) -> usize {
     (y * w.width + x) as usize
@@ -43,7 +45,7 @@ fn ai_conquers_in_2d() {
     w.nations[n0].money = 20000;
     w.nations[n0].materials = 2000;
     w.nations[n0].manpower = 2000;
-    w.nations[n0].tech[FER] = 1;
+    w.nations[n0].techs |= 1 << BRONZE;
     w.apply(Command::Settle { x: 10, y: 3, nation: 1, population: 100 });
     w.apply(Command::DeclareWar { nation: 0, target: 1 });
 
@@ -99,7 +101,7 @@ fn ai_invades_across_water() {
     w.nations[n0].money = 20000;
     w.nations[n0].materials = 2000;
     w.nations[n0].manpower = 2000;
-    w.nations[n0].tech[FER] = 1;
+    w.nations[n0].techs |= 1 << BRONZE;
     // Nation 1 : 1 case.
     w.apply(Command::Settle {
         x: 8,
@@ -158,7 +160,7 @@ fn ai_wages_and_wins_a_war() {
     w.nations[n0].money = 5000;
     w.nations[n0].materials = 500;
     w.nations[n0].manpower = 500;
-    w.nations[n0].tech[FER] = 1;
+    w.nations[n0].techs |= 1 << BRONZE;
     // Nation 1 (défenseure) : deux cases nues, loin sur la bande.
     w.apply(Command::Settle { x: 25, y, nation: 1, population: 100 });
     w.apply(Command::Settle { x: 26, y, nation: 1, population: 100 });

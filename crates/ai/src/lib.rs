@@ -11,20 +11,14 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use proto::{Building, Command, UnitKind};
-use sim::nation::{ESSOR, FER, LIEN, TERROIR};
 use sim::rng::Rng;
+use sim::tech::{self, Effect};
 use sim::tile::TileKind;
 use sim::unit::{unit_stats, Unit};
 use sim::World;
 
 mod director;
 pub use director::{Director, Intent, Stance};
-
-/// Branches **économie / expansion** que l'IA fait toujours progresser : capacité
-/// de charge (Terroir), portée d'essaimage (Essor), liens navals (Lien). Le
-/// **militaire (Fer)** s'ajoute dès qu'elle a une caserne — cf. [`plan`] — pour
-/// fielder Archers puis Cavalerie au lieu de rester à l'Infanterie.
-const AI_ECON_BRANCHES: [usize; 3] = [TERROIR, ESSOR, LIEN];
 
 /// Seuil de grief au-delà duquel l'IA déclare la guerre.
 const WAR_THRESHOLD: f32 = 3.0;
@@ -64,23 +58,34 @@ pub fn plan(world: &World, nation: u16) -> Vec<Command> {
         .iter()
         .any(|&i| world.tiles[i].building == Some(Building::Military));
 
-    // Recherche : économie + expansion en continu ; militaire (Fer) une fois la
-    // nation militarisée (caserne). On pousse la branche au plus bas palier
-    // d'abord (round-robin équilibré), si le savoir suffit.
+    // Recherche (arbre de tech) : parmi les technos RECHERCHABLES (prérequis acquis)
+    // et abordables ce tour, choisir par priorité — militaire d'abord si la nation
+    // est militarisée (caserne), économie/expansion sinon — puis par âge puis id
+    // (progression déterministe, âge par âge). Single-source : `sim::tech::TREE`.
     if let Some(n) = world.nation(nation) {
-        let mut branches: Vec<usize> = AI_ECON_BRANCHES.to_vec();
-        if barracks {
-            branches.push(FER);
-        }
-        let (branch, tier) = branches
+        let mask = n.techs;
+        let mut cands: Vec<&'static tech::Tech> = tech::TREE
             .iter()
-            .map(|&b| (b, n.tech[b]))
-            .min_by_key(|&(b, t)| (t, b))
-            .unwrap();
-        if n.knowledge >= sim::tech_cost(tier) {
+            .filter(|t| tech::can_research(mask, t.id) && n.knowledge >= t.cost)
+            .collect();
+        if !cands.is_empty() {
+            cands.sort_by_key(|t| {
+                let mil = t.effects.iter().any(|e| {
+                    matches!(
+                        e,
+                        Effect::Archer
+                            | Effect::Cavalry
+                            | Effect::UnitHp(_)
+                            | Effect::UnitDmg(_)
+                            | Effect::Manpower(_)
+                    )
+                });
+                let pref = if mil == barracks { 0u8 } else { 1u8 };
+                (pref, t.age, t.id)
+            });
             cmds.push(Command::Research {
                 nation,
-                branch: branch as u8,
+                tech: cands[0].id,
             });
         }
     }
@@ -378,7 +383,7 @@ fn march_toward(
     occ: &HashSet<(u32, u32)>,
 ) -> Option<(u32, u32)> {
     let is_naval = unit_stats(u.kind).naval;
-    let naval_tier = world.nation(nation).map(|n| n.tech[LIEN]).unwrap_or(0);
+    let naval = world.nation(nation).map(|n| n.effects().naval).unwrap_or(false);
     let width = world.width;
     let (w, h) = (world.width as i64, world.height as i64);
     let start = (u.y * width + u.x) as usize;
@@ -428,7 +433,7 @@ fn march_toward(
             let cost = if is_naval {
                 sim::path::naval_move_cost(world.tile(nx as u32, ny as u32))
             } else {
-                sim::path::unit_move_cost(world.tile(nx as u32, ny as u32), naval_tier)
+                sim::path::unit_move_cost(world.tile(nx as u32, ny as u32), naval)
             };
             if cost == u32::MAX {
                 continue;
@@ -485,7 +490,7 @@ fn march_to_enemy(
     enemy: &HashSet<usize>,
     occ: &HashSet<(u32, u32)>,
 ) -> Option<(u32, u32)> {
-    let naval_tier = world.nation(nation).map(|n| n.tech[LIEN]).unwrap_or(0);
+    let naval = world.nation(nation).map(|n| n.effects().naval).unwrap_or(false);
     let width = world.width;
     let (w, h) = (world.width as i64, world.height as i64);
     let start = (u.y * width + u.x) as usize;
@@ -517,7 +522,7 @@ fn march_to_enemy(
                 continue;
             }
             let v = (ny * w + nx) as usize;
-            let cost = sim::path::unit_move_cost(world.tile(nx as u32, ny as u32), naval_tier);
+            let cost = sim::path::unit_move_cost(world.tile(nx as u32, ny as u32), naval);
             if cost == u32::MAX {
                 continue;
             }
@@ -618,9 +623,10 @@ fn military(
     let cap = tiles_owned.clamp(3, 12);
     if my_units < cap {
         if let Some(n) = world.nation(nation) {
-            let kind = if n.tech[FER] >= 2 {
+            let e = n.effects();
+            let kind = if e.cavalry {
                 UnitKind::Cavalry
-            } else if n.tech[FER] >= 1 {
+            } else if e.archer {
                 UnitKind::Archer
             } else {
                 UnitKind::Infantry

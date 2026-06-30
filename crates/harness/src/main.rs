@@ -328,8 +328,8 @@ fn print_summary(world: &World, actors: &[u16], settled: bool) {
     for nid in ids {
         let (pop, tiles) = world.nation_stats(nid);
         let provs = provinces.iter().filter(|p| p.owner == nid).count();
-        let tech = world.nation(nid).map(|n| n.tech).unwrap_or_default();
-        println!("  nation {nid} : {pop:.0} hab, {tiles} cases, {provs} prov., tech {tech:?}");
+        let techs = world.nation(nid).map(|n| n.techs.count_ones()).unwrap_or(0);
+        println!("  nation {nid} : {pop:.0} hab, {tiles} cases, {provs} prov., {techs} techs");
     }
     let wars = world.diplomacy.wars();
     if !wars.is_empty() {
@@ -427,10 +427,10 @@ fn run_repl(world: &mut World) {
                 })),
                 _ => println!("arguments invalides"),
             },
-            ["research", nat, br] => match (u(nat), u(br)) {
-                (Some(nat), Some(br)) => emit(world.apply(Command::Research {
+            ["research", nat, tch] => match (u(nat), u(tch)) {
+                (Some(nat), Some(tch)) => emit(world.apply(Command::Research {
                     nation: nat as u16,
-                    branch: br as u8,
+                    tech: tch as u16,
                 })),
                 _ => println!("arguments invalides"),
             },

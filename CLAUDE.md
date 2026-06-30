@@ -29,7 +29,7 @@ Jeu de stratégie **minimaliste**, monde entier, en **Rust**, où le joueur fait
 
 - **S1 Physique de la case** — croissance logistique vers une *capacité de charge* dérivée du terrain ; famine = `pop > capacité` ; densité → congestion → villes **émergentes**.
 - **S2 Expansion (« Étendre ») & franchissement** — **REFONTE (EU5, 30/06)** : revendiquer une case terre **atteignable** (budget de coût terrain tech-gated) contre de l'**influence** ; **ne consomme PLUS de population** (fini le seuil 1000 et la division 50/50). La case revendiquée est **vide** ; on y bâtit une **ville** pour la peupler (la population ne vit que sur les villes — cf. refonte population en cours). Cible **choisie par le joueur** (auto pour les IA).
-- **S3 Savoir & tech** — savoir = flux *pur* des cases denses → arbre à **4 branches** (paliers = âges).
+- **S3 Savoir & tech** — **REFONTE (EU5, 30/06)** : savoir = flux *pur* des cases denses → **arbre de recherche** (graphe de technos à **prérequis**, 4 âges), remplace les 4 branches linéaires. Une nation détient un **ensemble** de techs (bitmask `u64`) ; les **effets sont une fonction pure** des techs acquises (`sim::tech::effects` → capacité, portée, naval, types d'unités, multiplicateurs de production/influence, efficacité du travail). Single-source : `sim::tech::TREE`.
 - **S4 Provinces émergentes** — flood-fill des cases connexes d'une nation ; agrégat unique lu par Directeur/diplo/militaire.
 - **S5 Militaire** — la force est une *stat de case* ; mouvement via la primitive d'essaimage ; combat sur case → `devastation`.
 - **S6 Diplomatie** — opinion = *fonction pure* ; traités = *prédicats* mensuels ; casus belli *mintés* par l'essaimage contesté.

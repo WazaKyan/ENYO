@@ -3,10 +3,12 @@
 //! malus d'attaque selon le type, destruction, déterminisme).
 
 use proto::{Building, Command, Event, UnitKind};
-use sim::nation::FER;
 use sim::tile::TileKind;
 use sim::unit::{unit_stats, Unit};
 use sim::World;
+
+/// Bronze (id 3 de l'arbre) débloque les Archers ; Forge (id 8) la Cavalerie.
+const BRONZE: u16 = 3;
 
 fn idx(w: &World, x: u32, y: u32) -> usize {
     (y * w.width + x) as usize
@@ -98,7 +100,7 @@ fn tech_gates_archer() {
         "archer sans tech -> rejet"
     );
     let ni = w.nations.iter().position(|n| n.id == 0).unwrap();
-    w.nations[ni].tech[FER] = 1;
+    w.nations[ni].techs |= 1 << BRONZE; // débloque les Archers
     let ev = w.apply(Command::CreateUnit {
         x: 5,
         y: 5,
@@ -165,7 +167,7 @@ fn unit_always_advances_one_tile_through_costly_terrain() {
     w.tiles[d].precip_now = 1.0;
     w.tiles[d].devastation = 1.0;
     assert!(
-        sim::path::unit_move_cost(w.tile(6, 5), 0) > unit_stats(UnitKind::Infantry).moves,
+        sim::path::unit_move_cost(w.tile(6, 5), false) > unit_stats(UnitKind::Infantry).moves,
         "le test exige une case plus chère que le budget de mouvement"
     );
     setup_barracks(&mut w, 5, 5, 0);

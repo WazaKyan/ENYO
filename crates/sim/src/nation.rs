@@ -1,16 +1,9 @@
 //! Les nations : acteurs qui possèdent des cases, accumulent du savoir et
-//! débloquent un arbre de technologie à 4 branches.
+//! débloquent un **arbre de recherche** (graphe de techs à prérequis, cf. `tech.rs`).
 
 use serde::{Deserialize, Serialize};
 
-/// Indices des branches de l'arbre de tech (cf. `docs/GAMEPLAY.md`).
-pub const ESSOR: usize = 0; // portée d'essaimage
-pub const TERROIR: usize = 1; // capacité de charge
-pub const FER: usize = 2; // militaire (Phase 4+)
-pub const LIEN: usize = 3; // naval / liens (franchir l'eau)
-
-/// Nombre de branches.
-pub const BRANCHES: usize = 4;
+use crate::tech;
 
 /// Stock d'argent au départ d'une nation (S8 — de quoi bâtir ses premières cases).
 pub const STARTING_MONEY: i64 = 500;
@@ -29,8 +22,11 @@ pub struct Nation {
     /// Savoir/science accumulé, dépensé pour la recherche (S3 ; alimenté par
     /// l'éducation en S8, + un flux de base par densité).
     pub knowledge: f32,
-    /// Palier atteint dans chaque branche (Essor, Terroir, Fer, Lien).
-    pub tech: [u8; BRANCHES],
+    /// **Techs débloquées** : bitmask (bit `i` = tech d'id `i` de `tech::TREE`). Les
+    /// effets se recalculent par fonction pure ([`Nation::effects`]) — jamais stockés.
+    /// `serde(default)` : les vieux snapshots (sans ce champ) chargent à 0.
+    #[serde(default)]
+    pub techs: u64,
 
     // --- Ressources S8 (économie interne), entières → déterminisme sans dérive ---
     /// Argent : bâtir + entretien mensuel.
@@ -56,7 +52,7 @@ impl Nation {
         Self {
             id,
             knowledge: 0.0,
-            tech: [0; BRANCHES],
+            techs: 0,
             money: STARTING_MONEY,
             materials: 0,
             influence: STARTING_INFLUENCE,
@@ -64,5 +60,11 @@ impl Nation {
             food: 0,
             manpower: 0,
         }
+    }
+
+    /// Effets cumulés des techs acquises (dérivé pur — capacité, portée, naval,
+    /// unités, multiplicateurs de production…). Lu par S1/S2/S5/S8.
+    pub fn effects(&self) -> tech::Effects {
+        tech::effects(self.techs)
     }
 }

@@ -23,7 +23,29 @@ Grand virage de design (réponses joueur) — implémenté par tranches :
   obstacles), un peu chaque tour, jusqu'à l'arrivée (l'ordre se lève alors). Résolu
   dans `resolve_turn` (pas de double-déplacement). L'IA garde son mouvement par tour.
   ✅ **fait (tranche 3)** — test `units::order_unit_pathfinds_around_obstacle_over_turns`.
-- **À venir** : (4) **arbre de recherche** (remplace les 4 branches).
+- **Arbre de recherche (remplace les 4 branches).** S3 devient un **graphe de technos
+  à prérequis** (`sim::tech::TREE`, 22 nœuds, 4 âges). Une nation détient un **ensemble**
+  de techs (bitmask `u64` `Nation.techs`) ; une tech est recherchable si **tous** ses
+  prérequis sont acquis et que le savoir couvre son coût (`Command::Research { tech }`).
+  Les **effets sont une fonction pure** des techs acquises (`tech::effects(mask)
+  → Effects`), lue par S1/S2/S5/S8 :
+  - **Capacité** des villes ×`capacity_mult` (Maçonnerie, Aqueducs, Ingénierie, Hygiène).
+  - **Portée d'expansion** +`range_bonus` (Roue, Ingénierie, Cartographie).
+  - **Naval** (franchir l'eau) débloqué par **Voile**.
+  - **Types d'unités** (Bronze → Archers, Forge → Cavalerie) + **bonus PV/dégâts**
+    (Chevalerie, Conscription).
+  - **Multiplicateurs de production** industrie/commerce/ferme/science/manpower
+    (Irrigation, Monnaie, Guildes, Université, Industrialisation, Banque…).
+  - **Efficacité du travail** `job_eff` : Bureaucratie/Guildes réduisent les postes
+    requis → plus de bâtiments dotés (appliqué comme relèvement du staffing).
+  - **Influence** ×`influence_mult` (Monnaie, Bureaucratie, Cartographie, Banque).
+  - **Pollution** ×`pollution_mult` (Industrialisation salit davantage : compromis).
+  L'IA débloque la frontière recherchable (militaire d'abord si militarisée, éco sinon ;
+  tri âge/id → déterministe). L'UI (catégorie **Technologie**) affiche la **frontière
+  recherchable** (techs dont les prérequis sont acquis) ; cliquer en débloque une.
+  ✅ **fait (tranche 4)** — tests `tech::*` (DAG, cumul des effets, verrou des prérequis).
+  Vérifié en simulation (400 tours, 10 nations) : les survivantes atteignent les 22 techs,
+  pop > 1 M ; record→replay bit-identique.
 
 ## RÉVISION (30/06) — villes/population d'abord + grosse passe de PERF
 

@@ -31,8 +31,9 @@ pub enum Building {
     Port,
 }
 
-/// Type d'unité militaire (S5). Débloqué par la branche **Fer** ; chaque type a
-/// ses stats (PV, dégâts, portée, mouvement) et ses affinités de terrain.
+/// Type d'unité militaire (S5). Débloqué par l'**arbre de recherche** (Bronze →
+/// Archers, Forge → Cavalerie) ; chaque type a ses stats (PV, dégâts, portée,
+/// mouvement) et ses affinités de terrain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UnitKind {
     /// Infanterie : polyvalente, robuste, corps à corps (aucun malus de terrain).
@@ -66,8 +67,9 @@ pub enum Command {
         to_x: u32,
         to_y: u32,
     },
-    /// Investit le savoir d'une nation dans une branche de l'arbre de tech (0..4).
-    Research { nation: u16, branch: u8 },
+    /// Débloque une **technologie** de l'arbre de recherche (S3) par son `tech` (id),
+    /// si ses prérequis sont acquis et le savoir suffit. Cf. `sim::tech::TREE`.
+    Research { nation: u16, tech: u16 },
     /// Bâtit un bâtiment (S8) sur une case possédée et vide, si la nation paie le coût.
     Build {
         x: u32,
@@ -160,8 +162,8 @@ pub enum Event {
         to_y: u32,
         moved: f32,
     },
-    /// Une technologie a été débloquée (nouveau palier d'une branche).
-    Researched { nation: u16, branch: u8, tier: u8 },
+    /// Une **technologie** a été débloquée (par son id dans `sim::tech::TREE`).
+    Researched { nation: u16, tech: u16 },
     /// Un bâtiment a été construit (S8 — économie interne).
     Built {
         x: u32,

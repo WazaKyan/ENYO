@@ -29,7 +29,7 @@ Le joueur est un **acteur** : il fait croître et essaimer sa civilisation et af
 | Rôle du joueur | **Acteur** — fait croître & essaimer sa civilisation | ✅ |
 | Boucle cœur | Implantation → croissance → essaimage à **1000 pop fixe** : population **divisée 50/50**, cible **choisie par le joueur** (auto pour les IA) | ✅ |
 | Portée d'essaimage | Dépend de la **technologie** (budget de coût terrain) | ✅ |
-| Technologie | **Arbre à 4 branches thématiques** (niveau nation) ; les paliers = les âges | ✅ |
+| Technologie | **Arbre de recherche à prérequis** (graphe, 4 âges ; niveau nation) — REFONTE EU5 (30/06), remplace les 4 branches. Effets = fonction pure des techs acquises (`sim::tech`) | ✅ |
 | Économie (MVP) | **Minimal** : développement + capacité + savoir (marchand → Phase 6) | ✅ |
 | Design gameplay | **7 systèmes cœur** (voir `docs/GAMEPLAY.md`) | ✅ |
 | Rythme | **Temps réel** (1 tick = 1 mois ; horloge dans `ui`) — voir `docs/REALTIME.md` | ✅ |
@@ -278,7 +278,7 @@ Le LLM (DeepSeek) **ne contrôle pas directement les nations ennemies**. C'est u
 La plupart des questions de design sont tranchées (voir §2 et `docs/GAMEPLAY.md`). Restent surtout des **calibrages**, à régler au moment du code :
 
 - ❓ Valeurs numériques des **garde-fous anti-injustice** du Directeur (cap des nudges négatifs, cooldowns, seuil de péril) — à calibrer sur l'Indice de Drame avant de brancher le LLM.
-- ❓ Contenu fin des **4 branches de tech** (quels modificateurs, à quels paliers).
+- ✅ Contenu fin de l'**arbre de tech** : 22 nœuds / 4 âges, prérequis + effets figés dans `sim::tech::TREE` (refonte EU5, 30/06). Modificateurs : capacité, portée, naval, types/bonus d'unités, multiplicateurs de prod, efficacité du travail, influence, pollution.
 - ❓ Stratégie précise de **ré-agrégation des provinces** (cadence, hystérésis) — à spécifier en Phase 3.
 
 ---

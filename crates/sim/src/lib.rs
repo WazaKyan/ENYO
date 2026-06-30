@@ -15,6 +15,7 @@ pub mod noise;
 pub mod path;
 pub mod province;
 pub mod rng;
+pub mod tech;
 pub mod tile;
 pub mod unit;
 pub mod worldgen;
@@ -254,12 +255,12 @@ impl World {
     pub fn capacity_at(&self, x: u32, y: u32) -> f32 {
         let idx = self.index(x, y);
         let t = &self.tiles[idx];
-        let terroir = t
+        let cap_mult = t
             .owner
             .and_then(|o| self.nation(o))
-            .map(|n| n.tech[nation::TERROIR])
-            .unwrap_or(0);
-        dynamics::carrying_capacity(t, terroir)
+            .map(|n| n.effects().capacity_mult)
+            .unwrap_or(1.0);
+        dynamics::carrying_capacity(t, cap_mult)
     }
 
     /// Événement de genèse (audit) : résumé du monde + checksum.
@@ -291,7 +292,7 @@ impl World {
                 to_x,
                 to_y,
             } => self.swarm(from_x, from_y, to_x, to_y),
-            Command::Research { nation, branch } => self.research(nation, branch),
+            Command::Research { nation, tech } => self.research(nation, tech),
             Command::Build {
                 x,
                 y,
@@ -421,9 +422,9 @@ impl World {
         if self.nations[ni].influence < SWARM_INFLUENCE {
             return reject("influence insuffisante");
         }
-        let essor = self.nations[ni].tech[nation::ESSOR];
-        let naval = self.nations[ni].tech[nation::LIEN];
-        let budget = path::range_budget(essor);
+        let eff = self.nations[ni].effects();
+        let naval = eff.naval;
+        let budget = path::range_budget(eff.range_bonus);
 
         match path::reach_cost(
             &self.tiles,
@@ -452,24 +453,29 @@ impl World {
         }
     }
 
-    /// Recherche (S3) : dépense du savoir pour monter d'un palier une branche.
-    fn research(&mut self, nation: u16, branch: u8) -> Vec<Event> {
-        if branch as usize >= nation::BRANCHES {
-            return reject("branche invalide");
-        }
+    /// Recherche (S3) : débloque une **technologie** de l'arbre. Exige que ses
+    /// prérequis soient acquis et que le savoir couvre son coût. Idempotente (une
+    /// tech déjà acquise est rejetée). Cf. `tech::TREE`.
+    fn research(&mut self, nation: u16, tech_id: u16) -> Vec<Event> {
+        let Some(t) = tech::get(tech_id) else {
+            return reject("technologie inconnue");
+        };
         let ni = self.ensure_nation(nation);
-        let tier = self.nations[ni].tech[branch as usize];
-        let cost = tech_cost(tier);
-        if self.nations[ni].knowledge < cost {
+        let mask = self.nations[ni].techs;
+        if tech::is_researched(mask, tech_id) {
+            return reject("technologie déjà acquise");
+        }
+        if !tech::can_research(mask, tech_id) {
+            return reject("prérequis manquants");
+        }
+        if self.nations[ni].knowledge < t.cost {
             return reject("savoir insuffisant");
         }
-        self.nations[ni].knowledge -= cost;
-        let new_tier = tier + 1;
-        self.nations[ni].tech[branch as usize] = new_tier;
+        self.nations[ni].knowledge -= t.cost;
+        self.nations[ni].techs |= 1u64 << tech_id;
         vec![Event::Researched {
             nation,
-            branch,
-            tier: new_tier,
+            tech: tech_id,
         }]
     }
 
@@ -672,10 +678,10 @@ impl World {
                 }
 
                 let ni = owner.and_then(|o| self.nations.iter().position(|n| n.id == o));
-                let terroir = ni
-                    .map(|i| self.nations[i].tech[nation::TERROIR])
-                    .unwrap_or(0);
-                let capacity = dynamics::carrying_capacity(&self.tiles[idx], terroir);
+                let cap_mult = ni
+                    .map(|i| self.nations[i].effects().capacity_mult)
+                    .unwrap_or(1.0);
+                let capacity = dynamics::carrying_capacity(&self.tiles[idx], cap_mult);
                 let neighbor = neighbor_pop_sum(&old_pop, width, height, x, y);
 
                 let t = &mut self.tiles[idx];
@@ -709,13 +715,18 @@ impl World {
         }
 
         // --- Économie interne S8 ---
+        // Effets de tech par nation (dérivés purs) — calculés une fois, lus par
+        // l'influence, le travail et la production ci-dessous.
+        let effs: Vec<tech::Effects> = self.nations.iter().map(|n| n.effects()).collect();
         // Influence (E5+) : flux ∝ **territoire** ET **population** — plus une
         // nation est grande et peuplée, plus elle rayonne (et plus elle peut
-        // s'étendre). Entier, sommé en ordre d'index → rejeu exact.
+        // s'étendre). Multiplié par les technos (Monnaie, Bureaucratie, Banque…).
+        // Entier, sommé en ordre d'index → rejeu exact.
         for (i, n) in self.nations.iter_mut().enumerate() {
             if owned[i] {
                 let from_pop = (pop_sum[i] / INFLUENCE_POP_DIVISOR) as i64;
-                n.influence += INFLUENCE_BASE + tile_count[i] * INFLUENCE_PER_TILE + from_pop;
+                let base = INFLUENCE_BASE + tile_count[i] * INFLUENCE_PER_TILE + from_pop;
+                n.influence += (base as f32 * effs[i].influence_mult) as i64;
             }
         }
         // Marché du travail (refonte EU5) : régions connexes + taux d'occupation des
@@ -742,24 +753,31 @@ impl World {
                 let Some(ni) = self.nations.iter().position(|n| n.id == owner) else {
                     continue;
                 };
+                let e = effs[ni];
                 // Taux d'occupation (0..1) des emplois de la région : la production
-                // d'un bâtiment baisse si la région manque d'habitants (EU5).
-                let staffing = labor.staffing_at(idx);
+                // d'un bâtiment baisse si la région manque d'habitants (EU5). Les techs
+                // d'efficacité (Bureaucratie, Guildes) réduisent les postes requis →
+                // équivaut à mieux doter la région (staffing relevé).
+                let staffing = (labor.staffing_at(idx) / (1.0 - e.job_eff)).min(1.0);
                 match building {
                     Building::Industry => {
-                        let out = industry_output(&self.tiles[idx], staffing);
+                        let out = (industry_output(&self.tiles[idx], staffing) as f32
+                            * e.industry_mult)
+                            .round() as i64;
                         materials_gain[ni] += out;
                         // Pas de production -> pas de pollution (une usine à l'arrêt
                         // ne dégrade pas la case ; corrige le piège « 0 mat + pollue »).
+                        // L'Industrialisation salit davantage (pollution_mult > 1).
                         if out > 0 {
                             let t = &mut self.tiles[idx];
-                            t.devastation = (t.devastation + INDUSTRY_POLLUTION).min(1.0);
+                            t.devastation =
+                                (t.devastation + INDUSTRY_POLLUTION * e.pollution_mult).min(1.0);
                         }
                     }
                     Building::Commerce if staffing > 0.0 => {
                         // Transforme des matériaux (selon main-d'œuvre, atténué par
                         // la dévastation) en argent + habitation.
-                        let want = (COMMERCE_BASE * staffing
+                        let want = (COMMERCE_BASE * staffing * e.commerce_mult
                             * (1.0 - self.tiles[idx].devastation))
                             .max(0.0)
                             .round() as i64;
@@ -778,7 +796,7 @@ impl World {
                             && self.nations[ni].money >= EDUCATION_UPKEEP =>
                     {
                         self.nations[ni].money -= EDUCATION_UPKEEP;
-                        science_gain[ni] += SCIENCE_BASE * staffing;
+                        science_gain[ni] += SCIENCE_BASE * staffing * e.science_mult;
                     }
                     // Caserne / port : produisent du **manpower** (national) depuis la
                     // main-d'œuvre de la région, contre un entretien mensuel ; sinon rien.
@@ -786,11 +804,13 @@ impl World {
                         if staffing > 0.0 && self.nations[ni].money >= MILITARY_UPKEEP =>
                     {
                         self.nations[ni].money -= MILITARY_UPKEEP;
-                        manpower_gain[ni] += (SOLDIERS_BASE * staffing).round() as i64;
+                        manpower_gain[ni] += (SOLDIERS_BASE * staffing * e.manpower_mult).round() as i64;
                     }
                     // Ferme : produit de la nourriture ∝ terrain × main-d'œuvre × (1−dev).
                     Building::Farm => {
-                        food_gain[ni] += farm_output(&self.tiles[idx], staffing);
+                        food_gain[ni] += (farm_output(&self.tiles[idx], staffing) as f32
+                            * e.farm_mult)
+                            .round() as i64;
                     }
                     // Ville (source de pop) / infrastructure : aucun produit ici.
                     _ => {}
@@ -1140,8 +1160,9 @@ impl World {
             return reject("case déjà occupée par une unité");
         }
         let ni = self.ensure_nation(nation);
-        if self.nations[ni].tech[nation::FER] < stats.tech_fer {
-            return reject("technologie (Fer) insuffisante pour ce type");
+        let eff = self.nations[ni].effects();
+        if !unit::unlocked(kind, &eff) {
+            return reject("technologie insuffisante pour ce type (Bronze/Forge)");
         }
         if self.nations[ni].money < stats.cost_money {
             return reject("argent insuffisant");
@@ -1153,13 +1174,15 @@ impl World {
         self.nations[ni].manpower -= stats.cost_force;
         let id = self.next_unit_id;
         self.next_unit_id += 1;
+        // Bonus de PV des techs militaires (Bronze/Forge/Chevalerie/Conscription).
+        let max_hp = stats.max_hp + eff.unit_hp;
         self.units.push(Unit {
             id,
             owner: nation,
             kind,
             x,
             y,
-            hp: stats.max_hp,
+            hp: max_hp,
             moves_left: stats.moves,
             order: None,
         });
@@ -1206,7 +1229,7 @@ impl World {
                 path::naval_move_cost,
             )
         } else {
-            let naval = self.nation(owner).map(|n| n.tech[nation::LIEN]).unwrap_or(0);
+            let naval = self.nation(owner).map(|n| n.effects().naval).unwrap_or(false);
             path::reach_cost_with(&self.tiles, self.width, self.height, from, to, moves_left, |t| {
                 path::unit_move_cost(t, naval)
             })
@@ -1224,7 +1247,7 @@ impl World {
                 let entry = if unit::unit_stats(kind).naval {
                     path::naval_move_cost(&self.tiles[to])
                 } else {
-                    let naval = self.nation(owner).map(|n| n.tech[nation::LIEN]).unwrap_or(0);
+                    let naval = self.nation(owner).map(|n| n.effects().naval).unwrap_or(false);
                     path::unit_move_cost(&self.tiles[to], naval)
                 };
                 let dxw = {
@@ -1310,7 +1333,7 @@ impl World {
             let owner = self.units[ui].owner;
             let budget = self.units[ui].moves_left;
             let full = unit::unit_stats(kind).moves;
-            let naval_tier = self.nation(owner).map(|n| n.tech[nation::LIEN]).unwrap_or(0);
+            let naval = self.nation(owner).map(|n| n.effects().naval).unwrap_or(false);
             let dest = if unit::unit_stats(kind).naval {
                 path::march_step(
                     &self.tiles, width, self.height, from, to, budget, full, &occupied,
@@ -1319,7 +1342,7 @@ impl World {
             } else {
                 path::march_step(
                     &self.tiles, width, self.height, from, to, budget, full, &occupied,
-                    |t| path::unit_move_cost(t, naval_tier),
+                    |t| path::unit_move_cost(t, naval),
                 )
             };
             if let Some(d) = dest {
@@ -1468,19 +1491,24 @@ impl World {
         }
         let a_tile = self.index(ax, ay);
         let d_tile = self.index(tx, ty);
+        // Bonus de dégâts des techs militaires (Bronze/Forge/Chevalerie), par nation.
+        let a_dmg = astats.damage
+            + self.nation(attacker_owner).map(|n| n.effects().unit_dmg).unwrap_or(0);
         // Coup de l'attaquant.
         let malus = self.attack_malus(akind, a_tile);
         let def = self.defense_bonus(d_tile);
-        let dealt = ((astats.damage * (100 - malus) / 100) * 100 / (100 + def)).max(1);
+        let dealt = ((a_dmg * (100 - malus) / 100) * 100 / (100 + def)).max(1);
         self.units[di].hp -= dealt;
         let killed = self.units[di].hp <= 0;
         // Riposte au corps à corps (échange adjacent, défenseur survivant).
         let mut counter = 0;
         if !killed && self.manhattan(ax, ay, tx, ty) == 1 {
             let dstats = unit::unit_stats(dkind);
+            let d_dmg = dstats.damage
+                + self.nation(defender_owner).map(|n| n.effects().unit_dmg).unwrap_or(0);
             let dmalus = self.attack_malus(dkind, d_tile);
             let adef = self.defense_bonus(a_tile);
-            counter = ((dstats.damage * (100 - dmalus) / 100) * 100 / (100 + adef)).max(1);
+            counter = ((d_dmg * (100 - dmalus) / 100) * 100 / (100 + adef)).max(1);
             self.units[ai].hp -= counter;
         }
         // L'attaque épuise le mouvement de l'attaquant.
@@ -1560,10 +1588,8 @@ impl World {
         for n in &self.nations {
             fnv_u32(&mut h, n.id as u32);
             fnv_u32(&mut h, n.knowledge.to_bits());
-            for tier in n.tech {
-                h ^= tier as u64;
-                h = h.wrapping_mul(FNV_PRIME);
-            }
+            h ^= n.techs;
+            h = h.wrapping_mul(FNV_PRIME);
             h ^= n.money as u64;
             h = h.wrapping_mul(FNV_PRIME);
             h ^= n.materials as u64;
@@ -1614,12 +1640,6 @@ impl World {
         }
         h
     }
-}
-
-/// Coût en savoir pour passer du palier `tier` au suivant. Public : utilisé par
-/// la crate `ai` pour décider quand chercher.
-pub fn tech_cost(tier: u8) -> f32 {
-    25.0 * (tier as f32 + 1.0)
 }
 
 /// Coût de construction (argent, matériaux, habitation) d'un bâtiment (S8,

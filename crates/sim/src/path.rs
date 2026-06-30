@@ -8,31 +8,37 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::tile::{Tile, TileKind};
 
-/// Coût (entier) pour ENTRER dans une case, selon le terrain et la tech navale.
-/// Océan = infranchissable sans tech Lien ; relief = plus cher.
-pub fn tile_cost(tile: &Tile, naval_tier: u8) -> u32 {
+/// Coût (entier) pour ENTRER dans une case, selon le terrain et la tech **navale**.
+/// Océan = infranchissable sans la tech Voile (`naval == false`) ; relief = plus cher.
+pub fn tile_cost(tile: &Tile, naval: bool) -> u32 {
     match tile.kind {
         TileKind::Land => 10 + (tile.ruggedness * 40.0) as u32,
         TileKind::Ocean => {
-            if naval_tier == 0 {
-                u32::MAX // infranchissable
+            if naval {
+                OCEAN_COST // franchissable une fois la Voile débloquée
             } else {
-                // moins cher à mesure que la tech navale progresse
-                30 + 20 * (3u32.saturating_sub(naval_tier as u32))
+                u32::MAX // infranchissable
             }
         }
     }
 }
 
-/// Budget de portée d'essaimage selon le palier de la branche Essor.
-pub fn range_budget(essor_tier: u8) -> u32 {
-    60 + 40 * essor_tier as u32
+/// Coût d'entrée sur une case d'océan, une fois la tech navale débloquée.
+pub const OCEAN_COST: u32 = 40;
+
+/// Portée d'expansion de base (budget de coût terrain de l'essaimage, sans tech).
+pub const RANGE_BASE: u32 = 60;
+
+/// Budget de portée d'essaimage : base + bonus cumulé des technos (Roue, Ingénierie,
+/// Cartographie…), fourni par `tech::Effects::range_bonus`.
+pub fn range_budget(range_bonus: u32) -> u32 {
+    RANGE_BASE + range_bonus
 }
 
 /// Coût d'entrée pour une **unité** (S5) : terrain (via `tile_cost`) + **intempéries**
 /// (pluie/orage, terrain ravagé, gel) qui ralentissent la marche. Entier, déterministe.
-pub fn unit_move_cost(tile: &Tile, naval_tier: u8) -> u32 {
-    let base = tile_cost(tile, naval_tier);
+pub fn unit_move_cost(tile: &Tile, naval: bool) -> u32 {
+    let base = tile_cost(tile, naval);
     if base == u32::MAX {
         return u32::MAX;
     }
@@ -234,10 +240,10 @@ pub fn reach_cost(
     from: usize,
     to: usize,
     budget: u32,
-    naval_tier: u8,
+    naval: bool,
 ) -> Option<u32> {
     reach_cost_with(tiles, width, height, from, to, budget, |t| {
-        tile_cost(t, naval_tier)
+        tile_cost(t, naval)
     })
 }
 
@@ -248,8 +254,8 @@ mod tests {
     use crate::World;
 
     #[test]
-    fn range_grows_with_essor() {
-        assert!(range_budget(2) > range_budget(0));
+    fn range_grows_with_tech_bonus() {
+        assert!(range_budget(40) > range_budget(0));
     }
 
     #[test]
@@ -270,8 +276,8 @@ mod tests {
             w.tiles[i].ruggedness = 0.0;
         }
         // Sans tech navale : infranchissable.
-        assert_eq!(reach_cost(&w.tiles, 4, 1, 0, 2, 1000, 0), None);
+        assert_eq!(reach_cost(&w.tiles, 4, 1, 0, 2, 1000, false), None);
         // Avec tech navale : franchissable.
-        assert!(reach_cost(&w.tiles, 4, 1, 0, 2, 1000, 2).is_some());
+        assert!(reach_cost(&w.tiles, 4, 1, 0, 2, 1000, true).is_some());
     }
 }

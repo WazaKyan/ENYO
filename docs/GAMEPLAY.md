@@ -19,7 +19,7 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 |---|---|---|---|
 | **S1** | **Physique de la case** — croissance logistique vers une *capacité de charge* dérivée du terrain ; famine = `pop > capacité` ; densité → congestion → débordement = **villes émergentes** | 2 | cité, famine (éco), saturation (pacing), capacité-tech |
 | **S2** | **Essaimage & franchissement** — à 1000 pop, division 50/50 vers une case *choisie par le joueur*, atteignable dans un **budget de coût terrain** (tech-gated). S1 *gate* S2 → tension tall/wide native | 2 | carte (essaimage, coût, franchissement) |
-| **S3** | **Savoir & arbre de tech** — savoir = flux *pur* des cases denses/développées (les villes) → finance un arbre compact de modificateurs. Les **paliers = les âges** | 2 | tech (×4), savoir-contagion, ères |
+| **S3** | **Savoir & arbre de recherche** — savoir = flux *pur* des cases denses/développées (les villes) → finance un **arbre de technos à prérequis** (graphe, 4 âges). Effets = **fonction pure** des techs acquises (capacité, portée, naval, unités, multiplicateurs de prod). **REFONTE EU5 (30/06)** : remplace les 4 branches linéaires. Cf. `docs/ECONOMY.md` § RÉVISION et `sim::tech::TREE` | 2 | arbre à prérequis, savoir-contagion, ères |
 | **S4** | **Provinces émergentes** — flood-fill des cases connexes d'une nation. Agrégat unique lu par Directeur/diplo/militaire (« jamais 400k cases ») | 3 | hiérarchie Case→Province→Nation |
 | **S5** | **Militaire** — la force est une *stat de case* ; mobilisation = curseur pop→force ; mouvement via la primitive d'essaimage ; combat déterministe sur case ; ravitaillement/attrition → terre brûlée ; bandes neutres → sécession | 4 | militaire (×6) |
 | **S6** | **Diplomatie** — opinion = *fonction pure* (culture + frontière + commerce + griefs décroissants) ; traités = *prédicats* évalués chaque mois ; casus belli *mintés* par l'essaimage contesté | 4 | diplomatie (×4) |
@@ -43,7 +43,9 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 > ne sert plus qu'à **recruter des unités** — des **agents discrets** (position, PV,
 > dégâts, portée, points de mouvement).
 > Recruter coûte **argent + force** ; les **types** (Infanterie, Archers, Cavalerie)
-> sont débloqués par la branche **Fer**. Les **points de mouvement** dépendent du
+> sont débloqués par l'**arbre de recherche** (Bronze → Archers, Forge → Cavalerie) ;
+> les techs militaires (Chevalerie, Conscription) donnent des **bonus de PV/dégâts**.
+> Les **points de mouvement** dépendent du
 > terrain ET des **intempéries** (pluie/dévastation/gel ralentissent — primitive
 > `path::unit_move_cost`). Au combat, le **terrain du défenseur** donne un bonus de
 > défense (végétation, relief, neige/pluie) et le **terrain de l'attaquant** peut

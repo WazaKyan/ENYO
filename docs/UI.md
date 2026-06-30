@@ -118,8 +118,11 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
 - **Barre d'action en SOUS-MENUS (catégories)** : rangée 1 = `Inspecter` +
   **Économie / Militaire / Diplomatie / Technologie** ; rangée 2 = les options de la
   catégorie ouverte (Économie : Fonder/Étendre + bâtiments ; Militaire :
-  Mobiliser/Marcher/Caserne ; Diplomatie : Guerre/Paix ; Technologie : Essor/Terroir/
-  Fer/Lien) ; rangée 3 = vitesse. Épure l'UI ; le clavier ouvre aussi la bonne
+  Mobiliser/Marcher/Caserne ; Diplomatie : Guerre/Paix ; **Technologie : la
+  *frontière recherchable* de l'arbre** — les technos dont les prérequis sont acquis,
+  étiquetées `Nom (coût)`, infobulle = effet + prérequis ; cliquer en débloque une et
+  de nouvelles apparaissent ; touches 1-4 = les 4 premières) ; rangée 3 = vitesse.
+  Épure l'UI ; le clavier ouvre aussi la bonne
   catégorie. Le bâtiment militaire s'appelle « Caserne » (vs la catégorie Militaire).
 - **Cycle de saison VISIBLE** (rendu pur, sim intouchée) : `render` ajoute un givre/
   neige saisonnier piloté par la **température courante** de la case → la neige

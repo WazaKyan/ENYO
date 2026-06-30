@@ -13,9 +13,11 @@ pub const MAX_POP_PER_TILE: f32 = 5000.0;
 /// Taux de croissance mensuel de base (logistique).
 const GROWTH_RATE: f32 = 0.08;
 
-/// Capacité de charge d'une case, dérivée du terrain + développement + tech Terroir.
+/// Capacité de charge d'une case, dérivée du terrain + développement + **techs**.
+/// `capacity_mult` = multiplicateur cumulé des technos (Maçonnerie, Aqueducs,
+/// Ingénierie, Hygiène…), fourni par `tech::Effects` (1.0 = aucune tech).
 /// Fonction PURE (jamais stockée) — l'unique source de vérité du plafond.
-pub fn carrying_capacity(tile: &Tile, terroir_tier: u8) -> f32 {
+pub fn carrying_capacity(tile: &Tile, capacity_mult: f32) -> f32 {
     if tile.kind != TileKind::Land {
         return 0.0;
     }
@@ -23,8 +25,7 @@ pub fn carrying_capacity(tile: &Tile, terroir_tier: u8) -> f32 {
     let quality = (tile.soil_fertility * 0.5 + tile.precipitation * 0.3 + warmth * 0.2)
         * (1.0 - 0.4 * tile.ruggedness);
     let dev_bonus = 1.0 + 0.5 * tile.development;
-    let tech_mult = 1.0 + 0.25 * terroir_tier as f32;
-    (quality.clamp(0.0, 1.0) * MAX_POP_PER_TILE * dev_bonus * tech_mult).max(0.0)
+    (quality.clamp(0.0, 1.0) * MAX_POP_PER_TILE * dev_bonus * capacity_mult).max(0.0)
 }
 
 /// Croissance logistique de la population vers la capacité ; surpopulation => famine.

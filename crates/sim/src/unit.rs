@@ -124,6 +124,16 @@ pub fn unit_stats(kind: UnitKind) -> UnitStats {
     }
 }
 
+/// Ce type est-il **débloqué** par les techs `eff` ? Infanterie et Galère sont
+/// disponibles d'emblée ; Archers (Bronze) et Cavalerie (Forge) sont tech-gatés.
+pub fn unlocked(kind: UnitKind, eff: &crate::tech::Effects) -> bool {
+    match kind {
+        UnitKind::Infantry | UnitKind::Galley => true,
+        UnitKind::Archer => eff.archer,
+        UnitKind::Cavalry => eff.cavalry,
+    }
+}
+
 /// Code stable d'un type pour le checksum (audit de déterminisme).
 pub fn kind_code(kind: UnitKind) -> u64 {
     match kind {
