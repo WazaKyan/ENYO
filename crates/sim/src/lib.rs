@@ -713,8 +713,9 @@ impl World {
                 n.influence += INFLUENCE_BASE + tile_count[i] * INFLUENCE_PER_TILE + from_pop;
             }
         }
-        // Réseaux d'infrastructure (E2) : main-d'œuvre mise en commun par les routes.
-        let networks = connect::Networks::build(&self.tiles, width, height);
+        // Marché du travail (refonte EU5) : régions connexes + taux d'occupation des
+        // emplois (la pop des villes est partagée — et DISPUTÉE — par les bâtiments).
+        let labor = connect::Labor::build(&self.tiles, width, height, INDUSTRY_WORKFORCE);
         // Production des bâtiments. Gains ENTIERS par nation, sommés/appliqués en
         // ordre d'index → indépendant de l'ordre, déterministe. La consommation de
         // matériaux par le commerce se fait depuis le stock (ordre d'index).
@@ -736,10 +737,12 @@ impl World {
                 let Some(ni) = self.nations.iter().position(|n| n.id == owner) else {
                     continue;
                 };
-                let cpop = networks.connected_pop(&self.tiles, idx, owner);
+                // Taux d'occupation (0..1) des emplois de la région : la production
+                // d'un bâtiment baisse si la région manque d'habitants (EU5).
+                let staffing = labor.staffing_at(idx);
                 match building {
                     Building::Industry => {
-                        let out = industry_output(&self.tiles[idx], cpop);
+                        let out = industry_output(&self.tiles[idx], staffing);
                         materials_gain[ni] += out;
                         // Pas de production -> pas de pollution (une usine à l'arrêt
                         // ne dégrade pas la case ; corrige le piège « 0 mat + pollue »).
@@ -748,11 +751,10 @@ impl World {
                             t.devastation = (t.devastation + INDUSTRY_POLLUTION).min(1.0);
                         }
                     }
-                    Building::Commerce if cpop > 0.0 => {
+                    Building::Commerce if staffing > 0.0 => {
                         // Transforme des matériaux (selon main-d'œuvre, atténué par
                         // la dévastation) en argent + habitation.
-                        let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
-                        let want = (COMMERCE_BASE * workforce
+                        let want = (COMMERCE_BASE * staffing
                             * (1.0 - self.tiles[idx].devastation))
                             .max(0.0)
                             .round() as i64;
@@ -763,32 +765,29 @@ impl World {
                             housing_gain[ni] += used * HOUSING_PER_MAT;
                         }
                     }
-                    // Université : exige main-d'œuvre + commerce connecté + entretien
-                    // payé ; sinon elle chôme (arm `_`). Produit de la science.
+                    // Université : exige main-d'œuvre + commerce dans la région +
+                    // entretien payé ; sinon elle chôme (arm `_`). Produit de la science.
                     Building::Education
-                        if cpop > 0.0
-                            && networks.has_commerce_connected(&self.tiles, idx, owner)
+                        if staffing > 0.0
+                            && labor.has_commerce_at(idx)
                             && self.nations[ni].money >= EDUCATION_UPKEEP =>
                     {
                         self.nations[ni].money -= EDUCATION_UPKEEP;
-                        let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
-                        science_gain[ni] += SCIENCE_BASE * workforce;
+                        science_gain[ni] += SCIENCE_BASE * staffing;
                     }
-                    // Caserne / port : produisent du **manpower** (national) depuis
-                    // la pop connectée, contre un entretien mensuel ; sinon rien.
+                    // Caserne / port : produisent du **manpower** (national) depuis la
+                    // main-d'œuvre de la région, contre un entretien mensuel ; sinon rien.
                     Building::Military | Building::Port
-                        if cpop > 0.0 && self.nations[ni].money >= MILITARY_UPKEEP =>
+                        if staffing > 0.0 && self.nations[ni].money >= MILITARY_UPKEEP =>
                     {
                         self.nations[ni].money -= MILITARY_UPKEEP;
-                        let workforce = (cpop / INDUSTRY_WORKFORCE).min(1.0);
-                        manpower_gain[ni] += (SOLDIERS_BASE * workforce).round() as i64;
+                        manpower_gain[ni] += (SOLDIERS_BASE * staffing).round() as i64;
                     }
-                    // Ferme : produit de la nourriture ∝ terrain (humidité, chaleur,
-                    // sol) × main-d'œuvre connectée × (1 − dévastation).
+                    // Ferme : produit de la nourriture ∝ terrain × main-d'œuvre × (1−dev).
                     Building::Farm => {
-                        food_gain[ni] += farm_output(&self.tiles[idx], cpop);
+                        food_gain[ni] += farm_output(&self.tiles[idx], staffing);
                     }
-                    // Infrastructure connecte (aucun produit) ; bâtiments à l'arrêt.
+                    // Ville (source de pop) / infrastructure : aucun produit ici.
                     _ => {}
                 }
             }
@@ -1561,11 +1560,11 @@ fn tile_value(t: &Tile) -> i64 {
 }
 
 /// Matériaux/mois produits par une industrie : ∝ stats de case (sol, végétation,
-/// intempéries) × main-d'œuvre connectée × (1 − dévastation). Entier (déterminisme).
-fn industry_output(t: &Tile, connected_pop: f32) -> i64 {
+/// intempéries) × **taux d'occupation** des emplois × (1 − dévastation). `staffing`
+/// est la fraction de main-d'œuvre (0..1) fournie par la région. Entier (déterminisme).
+fn industry_output(t: &Tile, staffing: f32) -> i64 {
     let terrain = (t.soil_fertility + t.vegetation + t.precip_now) / 3.0;
-    let workforce = (connected_pop / INDUSTRY_WORKFORCE).min(1.0);
-    industry_yield(terrain, workforce, t.devastation)
+    industry_yield(terrain, staffing, t.devastation)
 }
 
 /// Rendement d'industrie à partir des scalaires (pur, testable, formule gelée).
@@ -1576,12 +1575,12 @@ pub(crate) fn industry_yield(terrain: f32, workforce: f32, dev: f32) -> i64 {
 }
 
 /// Nourriture/mois d'une ferme : ∝ terrain agricole (sol, humidité/pluie, chaleur)
-/// × main-d'œuvre connectée × (1 − dévastation). Entier (déterminisme).
-fn farm_output(t: &Tile, connected_pop: f32) -> i64 {
+/// × **taux d'occupation** des emplois × (1 − dévastation). `staffing` = fraction de
+/// main-d'œuvre (0..1) fournie par la région. Entier (déterminisme).
+fn farm_output(t: &Tile, staffing: f32) -> i64 {
     let warmth = ((t.temperature + 10.0) / 40.0).clamp(0.0, 1.0);
     let terrain = (t.soil_fertility + t.precip_now + warmth) / 3.0;
-    let workforce = (connected_pop / INDUSTRY_WORKFORCE).min(1.0);
-    farm_yield(terrain, workforce, t.devastation)
+    farm_yield(terrain, staffing, t.devastation)
 }
 
 /// Rendement de ferme à partir des scalaires (pur, testable, formule gelée).

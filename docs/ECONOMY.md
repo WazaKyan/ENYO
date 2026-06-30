@@ -7,10 +7,18 @@ Grand virage de design (réponses joueur) — implémenté par tranches :
   case terre **atteignable** contre de l'**influence** ; plus de seuil 1000, plus de
   division 50/50. La case est **vide** (on y bâtit une ville pour la peupler).
   ✅ **fait (tranche 1)** — effet mesuré : bien plus de villes et de population.
-- **À venir** : (2) la **population ne vit que sur les villes** ; les villes connectées
-  partagent un **pool d'emplois LIMITÉ** (façon EU5) que les bâtiments se disputent
-  (sous-effectif → moins de production) ; (3) **ordres d'unités + pathfinding** (clic →
-  chemin intelligent, multi-tours) ; (4) **arbre de recherche** (remplace les 4 branches).
+- **Population sur les villes + emplois LIMITÉS (EU5).** La population vit sur les
+  **villes** (l'expansion crée des cases vides, seules les villes croissent). Une
+  **région connexe** (cases possédées adjacentes d'une nation) forme un **marché du
+  travail** : sa population (≈ pop des villes) est un **pool d'emplois LIMITÉ** que
+  TOUS ses bâtiments se **partagent**. Taux d'occupation d'un bâtiment =
+  `min(1, pop_région / (nb_bâtiments_emploi × INDUSTRY_WORKFORCE))` ; sous-effectif →
+  toute la région produit **au prorata**. Implémenté dans `connect::Labor` (composantes
+  connexes + staffing) ; la production (industrie/commerce/éducation/caserne/port/ferme)
+  est multipliée par ce taux. L'**infrastructure** devient inutile (la région est déjà
+  un seul marché). ✅ **fait (tranche 2)** — éco fonctionnelle (tech 10+, pop 500k+).
+- **À venir** : (3) **ordres d'unités + pathfinding** (clic → chemin intelligent,
+  multi-tours) ; (4) **arbre de recherche** (remplace les 4 branches).
 
 ## RÉVISION (30/06) — villes/population d'abord + grosse passe de PERF
 

@@ -1,9 +1,11 @@
-//! Connexion (S8) : réseaux d'**infrastructure**. Une case bâtie tire sa
-//! main-d'œuvre soit de son **voisinage direct** (adjacence — « à côté ça
-//! marche »), soit, si elle touche un **réseau d'infrastructure**, de TOUTE la
-//! population **desservie** par ce réseau (les routes mettent en commun la
-//! population de la région). Pur et déterministe : union-find en ordre d'index,
-//! racine = plus petit index ; sommes en ordre d'index.
+//! Marché du travail (refonte EU5, S8) : la population vit sur les **villes** ; les
+//! bâtiments d'une même **région connexe** (cases possédées adjacentes d'une nation)
+//! se partagent un **pool d'emplois LIMITÉ**. Pas assez d'habitants → sous-effectif
+//! → toute la région produit au **prorata**. Union-find en ordre d'index (racine =
+//! plus petit index) ; agrégats par racine en `HashMap` (lecture seule) → rejeu
+//! déterministe (le résultat ne dépend pas de l'ordre d'itération).
+
+use std::collections::{HashMap, HashSet};
 
 use crate::tile::Tile;
 use proto::Building;
@@ -30,30 +32,43 @@ fn union(root: &mut [u32], a: u32, b: u32) {
     }
 }
 
-/// Réseaux d'infrastructure d'un monde + population desservie par réseau.
-pub struct Networks {
-    width: i64,
-    height: i64,
-    root: Vec<u32>,           // racine union-find par index (cases infra)
-    served: Vec<f32>,         // population desservie par le réseau de cette racine
-    net_commerce: Vec<bool>,  // un commerce touche-t-il le réseau de cette racine ?
+/// Un bâtiment qui **emploie** de la main-d'œuvre (la ville = source de pop, l'infra
+/// = simple connecteur, ne comptent pas comme emplois).
+fn is_job(b: Building) -> bool {
+    matches!(
+        b,
+        Building::Industry
+            | Building::Commerce
+            | Building::Education
+            | Building::Military
+            | Building::Port
+            | Building::Farm
+    )
 }
 
-impl Networks {
-    /// Calcule les réseaux (infra adjacentes de même nation) et la population
-    /// desservie (chaque case peuplée nourrit les réseaux infra qu'elle touche).
-    pub fn build(tiles: &[Tile], width: u32, height: u32) -> Networks {
+/// Régions de travail : composantes connexes des cases possédées (par nation), avec
+/// leur **taux d'occupation des emplois** (staffing ∈ [0,1]) et la présence d'un
+/// commerce. Le staffing d'un bâtiment = la fraction de main-d'œuvre dont dispose
+/// SA région (population des villes ÷ demande totale d'emplois de la région).
+pub struct Labor {
+    root: Vec<u32>,
+    staffing: HashMap<u32, f32>,
+    commerce: HashSet<u32>,
+}
+
+impl Labor {
+    /// `job_slots` = nombre d'habitants pour pourvoir **pleinement un** bâtiment.
+    pub fn build(tiles: &[Tile], width: u32, height: u32, job_slots: f32) -> Labor {
         let w = width as i64;
         let h = height as i64;
         let n = tiles.len();
         let mut root: Vec<u32> = (0..n as u32).collect();
 
-        // 1) Unir les cases d'infrastructure adjacentes de même nation.
+        // 1) Unir les cases possédées ADJACENTES de même nation → régions connexes.
         for idx in 0..n {
-            if tiles[idx].building != Some(Building::Infrastructure) {
+            let Some(owner) = tiles[idx].owner else {
                 continue;
-            }
-            let owner = tiles[idx].owner;
+            };
             let (x, y) = (idx as i64 % w, idx as i64 / w);
             for (dx, dy) in ORTHO {
                 let nx = (x + dx).rem_euclid(w);
@@ -62,134 +77,64 @@ impl Networks {
                     continue;
                 }
                 let v = (ny * w + nx) as usize;
-                if tiles[v].building == Some(Building::Infrastructure) && tiles[v].owner == owner {
+                if tiles[v].owner == Some(owner) {
                     union(&mut root, idx as u32, v as u32);
                 }
             }
         }
-        // Aplatir les racines (chemins compressés une bonne fois).
         for i in 0..n as u32 {
             root[i as usize] = find(&mut root, i);
         }
 
-        // 2) Population desservie : chaque case peuplée ajoute sa pop aux réseaux
-        //    infra adjacents (dédupliqué par racine de réseau).
-        let mut served = vec![0.0f32; n];
-        let mut seen: Vec<u32> = Vec::with_capacity(4);
-        for idx in 0..n {
-            let pop = tiles[idx].population;
-            if pop <= 0.0 {
+        // 2) Par région : pool (pop des VILLES), nombre d'emplois, présence commerce.
+        let mut pool: HashMap<u32, f32> = HashMap::new();
+        let mut jobs: HashMap<u32, f32> = HashMap::new();
+        let mut commerce: HashSet<u32> = HashSet::new();
+        for (idx, t) in tiles.iter().enumerate() {
+            if t.owner.is_none() {
                 continue;
             }
-            let Some(owner) = tiles[idx].owner else {
-                continue;
-            };
-            let (x, y) = (idx as i64 % w, idx as i64 / w);
-            seen.clear();
-            for (dx, dy) in ORTHO {
-                let nx = (x + dx).rem_euclid(w);
-                let ny = y + dy;
-                if ny < 0 || ny >= h {
-                    continue;
-                }
-                let v = (ny * w + nx) as usize;
-                if tiles[v].building == Some(Building::Infrastructure)
-                    && tiles[v].owner == Some(owner)
-                {
-                    let r = root[v];
-                    if !seen.contains(&r) {
-                        seen.push(r);
-                        served[r as usize] += pop;
+            let r = root[idx];
+            // Pool = population de la région. En jeu, la pop ne vit que sur les VILLES
+            // (l'expansion crée des cases vides, seules les villes croissent) → le pool
+            // est donc la pop des villes. On somme toute la pop possédée pour rester
+            // robuste (cases avec pop résiduelle, parties chargées, tests).
+            *pool.entry(r).or_insert(0.0) += t.population;
+            if let Some(b) = t.building {
+                if is_job(b) {
+                    *jobs.entry(r).or_insert(0.0) += 1.0;
+                    if b == Building::Commerce {
+                        commerce.insert(r);
                     }
                 }
             }
         }
 
-        // 3) Présence d'un commerce sur chaque réseau (un commerce adjacent à une
-        //    infra rend tout le réseau « relié au commerce »). Pour l'éducation (E3).
-        let mut net_commerce = vec![false; n];
-        for idx in 0..n {
-            if tiles[idx].building != Some(Building::Commerce) {
-                continue;
-            }
-            let Some(owner) = tiles[idx].owner else {
-                continue;
-            };
-            let (x, y) = (idx as i64 % w, idx as i64 / w);
-            for (dx, dy) in ORTHO {
-                let nx = (x + dx).rem_euclid(w);
-                let ny = y + dy;
-                if ny < 0 || ny >= h {
-                    continue;
-                }
-                let v = (ny * w + nx) as usize;
-                if tiles[v].building == Some(Building::Infrastructure)
-                    && tiles[v].owner == Some(owner)
-                {
-                    net_commerce[root[v] as usize] = true;
-                }
-            }
+        // 3) Taux d'occupation : pop des villes ÷ demande (emplois × postes), borné à 1.
+        let mut staffing: HashMap<u32, f32> = HashMap::new();
+        for (&r, &j) in &jobs {
+            let p = pool.get(&r).copied().unwrap_or(0.0);
+            staffing.insert(r, (p / (j * job_slots)).min(1.0));
         }
 
-        Networks {
-            width: w,
-            height: h,
+        Labor {
             root,
-            served,
-            net_commerce,
+            staffing,
+            commerce,
         }
     }
 
-    /// Main-d'œuvre connectée d'une case bâtie : le **max** entre son voisinage
-    /// local (la case + ses 4 voisines de même nation) et le meilleur **réseau
-    /// d'infrastructure** adjacent (qui met en commun toute la région desservie).
-    pub fn connected_pop(&self, tiles: &[Tile], idx: usize, owner: u16) -> f32 {
-        let (x, y) = (idx as i64 % self.width, idx as i64 / self.width);
-        let mut local = tiles[idx].population;
-        let mut best_net = 0.0f32;
-        for (dx, dy) in ORTHO {
-            let nx = (x + dx).rem_euclid(self.width);
-            let ny = y + dy;
-            if ny < 0 || ny >= self.height {
-                continue;
-            }
-            let v = (ny * self.width + nx) as usize;
-            if tiles[v].owner == Some(owner) {
-                local += tiles[v].population;
-                if tiles[v].building == Some(Building::Infrastructure) {
-                    let s = self.served[self.root[v] as usize];
-                    if s > best_net {
-                        best_net = s;
-                    }
-                }
-            }
-        }
-        local.max(best_net)
+    /// Taux d'occupation (0..1) des emplois de la région de la case `idx` : la
+    /// fraction de main-d'œuvre disponible pour ses bâtiments (1 si pas d'emplois).
+    pub fn staffing_at(&self, idx: usize) -> f32 {
+        self.staffing
+            .get(&self.root[idx])
+            .copied()
+            .unwrap_or(1.0)
     }
 
-    /// Un **commerce** est-il connecté à `idx` — en voisin direct, ou via un réseau
-    /// d'infrastructure adjacent ? (Condition de fonctionnement de l'éducation, E3.)
-    pub fn has_commerce_connected(&self, tiles: &[Tile], idx: usize, owner: u16) -> bool {
-        let (x, y) = (idx as i64 % self.width, idx as i64 / self.width);
-        for (dx, dy) in ORTHO {
-            let nx = (x + dx).rem_euclid(self.width);
-            let ny = y + dy;
-            if ny < 0 || ny >= self.height {
-                continue;
-            }
-            let v = (ny * self.width + nx) as usize;
-            if tiles[v].owner != Some(owner) {
-                continue;
-            }
-            if tiles[v].building == Some(Building::Commerce) {
-                return true; // commerce voisin direct
-            }
-            if tiles[v].building == Some(Building::Infrastructure)
-                && self.net_commerce[self.root[v] as usize]
-            {
-                return true; // commerce sur le réseau adjacent
-            }
-        }
-        false
+    /// Un **commerce** est-il présent dans la même région que `idx` ? (Éducation.)
+    pub fn has_commerce_at(&self, idx: usize) -> bool {
+        self.commerce.contains(&self.root[idx])
     }
 }

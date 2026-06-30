@@ -33,52 +33,32 @@ fn three_land_in_row(w: &World) -> [(u32, u32); 3] {
 }
 
 #[test]
-fn infrastructure_pools_population() {
-    use sim::connect::Networks;
+fn limited_jobs_share_the_pool() {
+    // Refonte EU5 : la pop d'une région connexe est un POOL d'emplois LIMITÉ ; ajouter
+    // un bâtiment sans habitants en plus met tout le monde en sous-effectif.
+    use sim::connect::Labor;
     let mut w = World::new(11, 80, 60);
     let [a, b, c] = three_land_in_row(&w);
-    for (p, pop) in [(a, 800u32), (b, 100), (c, 900)] {
-        w.apply(Command::Settle {
-            x: p.0,
-            y: p.1,
-            nation: 0,
-            population: pop,
-        });
-    }
-    // Industrie sur A pour accumuler les matériaux nécessaires à l'infra (20).
-    w.apply(Command::Build {
-        x: a.0,
-        y: a.1,
-        nation: 0,
-        building: Building::Industry,
-    });
-    for _ in 0..30 {
-        w.apply(Command::Step);
-    }
-    let c_idx = (c.1 * w.width + c.0) as usize;
-    // Sans infra : C ne voit que son voisinage (C + B), pas A (non adjacente).
-    let before = Networks::build(&w.tiles, w.width, w.height).connected_pop(&w.tiles, c_idx, 0);
-    // Infra en B : C est reliée au réseau qui dessert A et C → pop de A mise en commun.
-    let (nmon, nmat) = {
-        let n = w.nation(0).unwrap();
-        (n.money, n.materials)
-    };
-    let ev = w.apply(Command::Build {
-        x: b.0,
-        y: b.1,
-        nation: 0,
-        building: Building::Infrastructure,
-    });
-    assert!(
-        matches!(ev[0], Event::Built { .. }),
-        "infra bâtie (argent {nmon}, mat {nmat}, ev {:?})",
-        ev[0]
-    );
-    let after = Networks::build(&w.tiles, w.width, w.height).connected_pop(&w.tiles, c_idx, 0);
-    assert!(
-        after > before,
-        "l'infra met en commun la pop de la region ({before} -> {after})"
-    );
+    let ia = (a.1 * w.width + a.0) as usize;
+    let ib = (b.1 * w.width + b.0) as usize;
+    let ic = (c.1 * w.width + c.0) as usize;
+    // Région connexe : une ville peuplée (a) + 2 cases possédées (b, c).
+    w.tiles[ia].owner = Some(0);
+    w.tiles[ia].building = Some(Building::City);
+    w.tiles[ia].population = 1000.0;
+    w.tiles[ib].owner = Some(0);
+    w.tiles[ic].owner = Some(0);
+
+    // 1 emploi (industrie en b) : 1000 hab / (1 × 1000 postes) = plein-emploi.
+    w.tiles[ib].building = Some(Building::Industry);
+    let s1 = Labor::build(&w.tiles, w.width, w.height, 1000.0).staffing_at(ib);
+    assert!((s1 - 1.0).abs() < 1e-6, "plein-emploi à 1 bâtiment : {s1}");
+
+    // 2 emplois (industrie en c aussi) : la MÊME pop se partage → demi-effectif.
+    w.tiles[ic].building = Some(Building::Industry);
+    let s2 = Labor::build(&w.tiles, w.width, w.height, 1000.0).staffing_at(ib);
+    assert!((s2 - 0.5).abs() < 1e-6, "demi-effectif à 2 bâtiments : {s2}");
+    assert!(s2 < s1, "ajouter un bâtiment sans habitants réduit l'occupation");
 }
 
 #[test]

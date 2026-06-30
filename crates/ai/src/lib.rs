@@ -203,7 +203,7 @@ fn economy(
     };
     // N'itère que les cases POSSÉDÉES (pré-calculées par plan), pas les 400k cases.
     let (mut cities, mut industries, mut farms) = (0i64, 0i64, 0i64);
-    let (mut commerces, mut educations, mut infras, mut militaries) = (0i64, 0i64, 0i64, 0i64);
+    let (mut commerces, mut educations, mut militaries) = (0i64, 0i64, 0i64);
     let mut empty: Vec<usize> = Vec::new();
     for &idx in owned {
         let t = &world.tiles[idx];
@@ -213,9 +213,8 @@ fn economy(
             Some(Building::Farm) => farms += 1,
             Some(Building::Commerce) => commerces += 1,
             Some(Building::Education) => educations += 1,
-            Some(Building::Infrastructure) => infras += 1,
             Some(Building::Military) => militaries += 1,
-            Some(Building::Port) => {}
+            Some(Building::Infrastructure) | Some(Building::Port) => {}
             None if t.kind == TileKind::Land => empty.push(idx),
             _ => {}
         }
@@ -223,7 +222,6 @@ fn economy(
     if empty.is_empty() {
         return Vec::new(); // pas de case terre libre où bâtir
     }
-    let tiles_owned = owned.len() as i64;
     let at_war = at_war_with_anyone(world, nation);
     // AGRESSION MAXIMALE : on s'arme dès qu'un rival existe (peu importe la
     // distance), pour pouvoir l'attaquer dès que possible. Plus de caserne tardive.
@@ -270,9 +268,7 @@ fn economy(
     if militarize && militaries * 4 < cities {
         wish.push(Building::Military); // casernes en appoint (≪ qu'avant)
     }
-    if infras * 8 < tiles_owned {
-        wish.push(Building::Infrastructure); // connecter un territoire très étalé
-    }
+    // (Infrastructure n'est plus utile avec le marché du travail par région connexe.)
     // 4) Recours : encore une ville.
     wish.push(Building::City);
 
