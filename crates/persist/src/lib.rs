@@ -96,5 +96,8 @@ pub fn save_snapshot(world: &World, path: impl AsRef<Path>) -> Result<()> {
 /// Charge un snapshot complet.
 pub fn load_snapshot(path: impl AsRef<Path>) -> Result<World> {
     let json = std::fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&json)?)
+    let mut world: World = serde_json::from_str(&json)?;
+    // L'index des cases possédées n'est pas sérialisé (dérivé) → le reconstruire.
+    world.rebuild_owned_index();
+    Ok(world)
 }

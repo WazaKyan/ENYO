@@ -19,7 +19,7 @@ pub mod tile;
 pub mod unit;
 pub mod worldgen;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use diplo::Diplomacy;
 use nation::Nation;
@@ -137,6 +137,12 @@ pub struct World {
     /// ordre déterministe (checksum).
     #[serde(default)]
     pub cargo: BTreeMap<u32, Vec<CarriedUnit>>,
+    /// **Index dérivé** (non sérialisé) : cases possédées par nation, en ordre
+    /// d'index croissant. Maintenu à chaque changement de propriétaire → l'IA lit
+    /// ses cases en O(possédées) au lieu de scanner les 400k cases à chaque plan
+    /// (gros gain de perf par tick). Reconstruit après un chargement de snapshot.
+    #[serde(skip)]
+    owned_index: HashMap<u16, Vec<usize>>,
 }
 
 impl World {
@@ -157,7 +163,44 @@ impl World {
             units: Vec::new(),
             next_unit_id: 1,
             cargo: BTreeMap::new(),
+            owned_index: HashMap::new(),
         }
+    }
+
+    /// Ajoute une case à l'index des cases possédées, en maintenant l'ordre d'index
+    /// (insertion triée) → l'IA itère ses cases dans l'ordre canonique (déterminisme).
+    fn idx_own(&mut self, nation: u16, idx: usize) {
+        let v = self.owned_index.entry(nation).or_default();
+        if let Err(pos) = v.binary_search(&idx) {
+            v.insert(pos, idx);
+        }
+    }
+
+    /// Retire une case de l'index d'une nation (perte de territoire).
+    fn idx_disown(&mut self, nation: u16, idx: usize) {
+        if let Some(v) = self.owned_index.get_mut(&nation) {
+            if let Ok(pos) = v.binary_search(&idx) {
+                v.remove(pos);
+            }
+        }
+    }
+
+    /// Reconstruit entièrement l'index possédé depuis les cases (après un chargement
+    /// de snapshot : l'index n'est pas sérialisé car il est dérivé).
+    pub fn rebuild_owned_index(&mut self) {
+        let mut idx_map: HashMap<u16, Vec<usize>> = HashMap::new();
+        for (i, t) in self.tiles.iter().enumerate() {
+            if let Some(o) = t.owner {
+                idx_map.entry(o).or_default().push(i); // ordre d'index croissant
+            }
+        }
+        self.owned_index = idx_map;
+    }
+
+    /// Cases possédées par `nation`, en ordre d'index croissant (vide si aucune).
+    /// Lecture O(1) pour l'IA — évite de scanner toute la grille.
+    pub fn owned_tiles(&self, nation: u16) -> &[usize] {
+        self.owned_index.get(&nation).map_or(&[], |v| v.as_slice())
     }
 
     /// Index linéaire d'une case (x, y).
@@ -309,6 +352,7 @@ impl World {
         let t = &mut self.tiles[idx];
         t.owner = Some(nation);
         t.population += population as f32;
+        self.idx_own(nation, idx);
         vec![Event::Settled {
             nation,
             x,
@@ -374,6 +418,7 @@ impl World {
                 let t = &mut self.tiles[to];
                 t.owner = Some(nation);
                 t.population += moved;
+                self.idx_own(nation, to);
                 vec![Event::Swarmed {
                     nation,
                     from_x: fx,
@@ -485,26 +530,14 @@ impl World {
         let width = self.width;
         let height = self.height;
 
-        // Passe 1 — météo + biosphère.
+        // Passe 1 — météo + biosphère (coût mémoire-borné : on touche les 400k cases).
+        let wu = width as usize;
         let mut temp_sum = 0.0f64;
         let mut veg_sum = 0.0f64;
-        for y in 0..height {
-            let v = y as f32 / height as f32;
-            let lat = (v - 0.5).abs() * 2.0;
-            let north = v < 0.5;
-            for x in 0..width {
-                let idx = y as usize * width as usize + x as usize;
-                let wn = noise_signed(weather_seed, x as i64, y as i64);
-                let t = &mut self.tiles[idx];
-                climate::update_weather(t, month, lat, north, wn);
-                if t.kind == TileKind::Land {
-                    let target =
-                        worldgen::vegetation_target(t.kind, t.mean_temperature, t.precipitation);
-                    t.vegetation += (target - t.vegetation) * 0.05;
-                }
-                temp_sum += t.temperature as f64;
-                veg_sum += t.vegetation as f64;
-            }
+        for (idx, t) in self.tiles.iter_mut().enumerate() {
+            update_tile_weather(t, idx, wu, height, month, weather_seed);
+            temp_sum += t.temperature as f64;
+            veg_sum += t.vegetation as f64;
         }
 
         // Passe 2 — anthropique (capacité, population, développement, savoir, frontières).
@@ -865,6 +898,7 @@ impl World {
         self.nations[ni].materials -= mat_cost;
         self.nations[ni].housing -= housing_cost;
         self.tiles[idx].owner = Some(nation); // le port revendique la case d'eau
+        self.idx_own(nation, idx); // idempotent si la case était déjà possédée
         self.tiles[idx].building = Some(building);
         // Fonder une ville amène des colons (amorce la croissance logistique).
         if building == Building::City && self.tiles[idx].population < CITY_SEED_POP {
@@ -1016,13 +1050,18 @@ impl World {
                     continue; // pas encore > 75 %
                 }
                 // Annexion des cases occupées par le vainqueur + paix imposée.
-                let mut tiles = 0u32;
-                for t in &mut self.tiles {
+                let mut transferred: Vec<usize> = Vec::new();
+                for (i, t) in self.tiles.iter_mut().enumerate() {
                     if t.owner == Some(def) && t.occupier == Some(att) {
                         t.owner = Some(att);
                         t.occupier = None;
-                        tiles += 1;
+                        transferred.push(i);
                     }
+                }
+                let tiles = transferred.len() as u32;
+                for i in transferred {
+                    self.idx_disown(def, i);
+                    self.idx_own(att, i);
                 }
                 self.clear_occupations(att, def);
                 self.diplomacy.set_war(att, def, false);
@@ -1560,6 +1599,23 @@ fn neighbor_pop_sum(pop: &[f32], width: u32, height: u32, x: u32, y: u32) -> f32
         s += pop[(ny * w + nx) as usize];
     }
     s
+}
+
+/// Met à jour la météo + végétation d'**une** case (extrait pour partager entre la
+/// passe météo séquentielle et parallèle). Pur : ne dépend que de la case et de
+/// (idx, mois, graine météo) → même résultat quel que soit le thread/cœur.
+fn update_tile_weather(t: &mut Tile, idx: usize, width: usize, height: u32, month: u8, weather_seed: u64) {
+    let x = (idx % width) as i64;
+    let y = (idx / width) as i64;
+    let v = y as f32 / height as f32;
+    let lat = (v - 0.5).abs() * 2.0;
+    let north = v < 0.5;
+    let wn = noise_signed(weather_seed, x, y);
+    climate::update_weather(t, month, lat, north, wn);
+    if t.kind == TileKind::Land {
+        let target = worldgen::vegetation_target(t.kind, t.mean_temperature, t.precipitation);
+        t.vegetation += (target - t.vegetation) * 0.05;
+    }
 }
 
 /// Petit bruit déterministe signé (~[-1, 1]) pour (seed, x, y), sans état.

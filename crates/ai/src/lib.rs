@@ -33,25 +33,33 @@ const WAR_THRESHOLD: f32 = 3.0;
 pub fn plan(world: &World, nation: u16) -> Vec<Command> {
     let mut cmds = Vec::new();
     let width = world.width;
-    // UN SEUL passage sur la grille (au lieu de ~5 scans O(400k) par tour, le gros
-    // du coût) : ancres de TOUTES les nations (nearest_rival), cases POSSÉDÉES, et
-    // cases ENNEMIES (en guerre, non occupées). economy/expansion/military
-    // réutilisent ces listes et n'itèrent plus que les cases possédées (~dizaines).
+    // Plus de scan des 400k cases par plan : on lit l'**index des cases possédées**
+    // maintenu par le World (O(possédées)). C'était le gros du coût par tick avec
+    // plusieurs nations. Comportement identique (mêmes listes, même ordre d'index).
+    let owned: &[usize] = world.owned_tiles(nation);
+    // Ancres = première case (index min) de chaque nation.
     let mut anchors: HashMap<u16, (u32, u32)> = HashMap::new();
-    let mut owned: Vec<usize> = Vec::new();
-    let mut enemy_tiles: Vec<(u32, u32)> = Vec::new();
+    for n in &world.nations {
+        if let Some(&first) = world.owned_tiles(n.id).first() {
+            anchors.insert(n.id, coords(first, width));
+        }
+    }
+    // Cases ennemies (en guerre, non occupées par nous), remises en ordre d'index
+    // GLOBAL (comme l'ancien scan) → mêmes bris d'égalité dans les min_by_key.
     let mut enemy_set: HashSet<usize> = HashSet::new();
-    for (idx, t) in world.tiles.iter().enumerate() {
-        if let Some(o) = t.owner {
-            anchors.entry(o).or_insert_with(|| coords(idx, width));
-            if o == nation {
-                owned.push(idx);
-            } else if world.diplomacy.at_war(nation, o) && t.occupier != Some(nation) {
-                enemy_tiles.push(coords(idx, width));
+    for n in &world.nations {
+        if n.id == nation || !world.diplomacy.at_war(nation, n.id) {
+            continue;
+        }
+        for &idx in world.owned_tiles(n.id) {
+            if world.tiles[idx].occupier != Some(nation) {
                 enemy_set.insert(idx);
             }
         }
     }
+    let mut enemy_sorted: Vec<usize> = enemy_set.iter().copied().collect();
+    enemy_sorted.sort_unstable();
+    let enemy_tiles: Vec<(u32, u32)> = enemy_sorted.iter().map(|&i| coords(i, width)).collect();
     let barracks = owned
         .iter()
         .any(|&i| world.tiles[i].building == Some(Building::Military));
@@ -79,9 +87,9 @@ pub fn plan(world: &World, nation: u16) -> Vec<Command> {
 
     // Économie : bâtir (industrie → ferme → commerce → ville) pour soutenir la
     // population — qui ne croît que via les villes, et qui doit être nourrie.
-    cmds.extend(economy(world, nation, &anchors, &owned));
+    cmds.extend(economy(world, nation, &anchors, owned));
 
-    cmds.extend(expansion(world, nation, &anchors, &owned));
+    cmds.extend(expansion(world, nation, &anchors, owned));
 
     // Diplomatie : guerre sur grief élevé ; sinon, **conquête proactive** du
     // rival le plus proche dès qu'on a une caserne (capacité militaire) et qu'on
@@ -100,7 +108,7 @@ pub fn plan(world: &World, nation: u16) -> Vec<Command> {
     }
 
     // Militaire : recruter / déplacer / attaquer / occuper (si en guerre).
-    cmds.extend(military(world, nation, &owned, &enemy_tiles, &enemy_set));
+    cmds.extend(military(world, nation, owned, &enemy_tiles, &enemy_set));
 
     cmds
 }

@@ -111,6 +111,10 @@ fn ai_invades_across_water() {
         nation: 0,
         target: 1,
     });
+    // Ce test pose des propriétaires en écrivant `tile.owner` DIRECTEMENT (hors
+    // Settle/Swarm) → l'index des cases possédées doit être reconstruit pour que
+    // l'IA voie tout son territoire.
+    w.rebuild_owned_index();
 
     let mut won = false;
     for _ in 0..300 {
