@@ -379,7 +379,11 @@ impl World {
         }]
     }
 
-    /// Essaimage (S2) : déplace la moitié de la population vers une cible à portée.
+    /// **Étendre** (S2) : revendique une case terre **atteignable** depuis son
+    /// territoire contre de l'**influence**. Ne déplace PLUS de population (refonte
+    /// EU5 : la pop ne vit que sur les villes) — la case revendiquée est **vide** ;
+    /// on y bâtit une ville pour la peupler. `from` sert de point de lancement
+    /// (atteignabilité selon la portée Essor) ; il n'a plus besoin de population.
     fn swarm(&mut self, fx: u32, fy: u32, tx: u32, ty: u32) -> Vec<Event> {
         if fx >= self.width || fy >= self.height || tx >= self.width || ty >= self.height {
             return reject("hors carte");
@@ -393,15 +397,14 @@ impl World {
             Some(o) => o,
             None => return reject("source non possédée"),
         };
-        if self.tiles[from].population < 1000.0 {
-            return reject("population source < 1000");
-        }
+        // Plus de seuil de population sur la source (étendre ne consomme plus de pop).
         if self.tiles[to].kind != TileKind::Land {
             return reject("cible aquatique");
         }
-        if let Some(o) = self.tiles[to].owner {
-            if o != nation {
-                // Essaimage sur une case ennemie : casus belli, pas d'installation.
+        match self.tiles[to].owner {
+            Some(o) if o == nation => return reject("case déjà possédée"),
+            Some(o) => {
+                // Étendre sur une case ennemie : casus belli, pas d'installation.
                 self.diplomacy.add_grievance(nation, o, 1.0);
                 return vec![Event::GrievanceRaised {
                     from: nation,
@@ -410,6 +413,7 @@ impl World {
                     y: ty,
                 }];
             }
+            None => {}
         }
 
         let ni = self.ensure_nation(nation);
@@ -430,12 +434,9 @@ impl World {
             naval,
         ) {
             Some(_) => {
-                self.nations[ni].influence -= SWARM_INFLUENCE; // coût d'expansion (E5)
-                let moved = self.tiles[from].population * 0.5;
-                self.tiles[from].population -= moved;
-                let t = &mut self.tiles[to];
-                t.owner = Some(nation);
-                t.population += moved;
+                self.nations[ni].influence -= SWARM_INFLUENCE; // coût d'expansion
+                // Revendique la case SANS y déplacer de population (case vide).
+                self.tiles[to].owner = Some(nation);
                 self.idx_own(nation, to);
                 vec![Event::Swarmed {
                     nation,
@@ -443,7 +444,7 @@ impl World {
                     from_y: fy,
                     to_x: tx,
                     to_y: ty,
-                    moved,
+                    moved: 0.0,
                 }]
             }
             None => reject("cible hors de portée"),

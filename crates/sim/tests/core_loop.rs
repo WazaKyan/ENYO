@@ -99,17 +99,21 @@ fn settle_on_water_is_rejected() {
 }
 
 #[test]
-fn swarm_requires_threshold_then_succeeds() {
+fn swarm_claims_empty_tile_for_influence() {
+    // Refonte : « Étendre » ne demande PLUS de population. Coûte de l'influence,
+    // revendique une case terre atteignable, qui reste VIDE (pas de pop déplacée).
     let mut w = World::new(10, 120, 80);
     let ((x, y), near) = land_pair(&w);
-
-    // Sous 1000 : rejet.
     w.apply(Command::Settle {
         x,
         y,
         nation: 0,
         population: 200,
     });
+    let ni = w.nations.iter().position(|n| n.id == 0).unwrap();
+
+    // Sans influence : rejet (peu importe la population).
+    w.nations[ni].influence = 0;
     let ev = w.apply(Command::Swarm {
         from_x: x,
         from_y: y,
@@ -118,28 +122,24 @@ fn swarm_requires_threshold_then_succeeds() {
     });
     assert!(
         matches!(ev[0], Event::CommandRejected { .. }),
-        "doit refuser sous 1000"
+        "doit refuser sans influence"
     );
 
-    // L'essaimage coûte de l'influence (E5) : l'accumuler d'abord.
-    for _ in 0..10 {
-        w.apply(Command::Step);
-    }
-    // Au-dessus de 1000 et à portée d'une case adjacente : succès.
-    w.apply(Command::Settle {
-        x,
-        y,
-        nation: 0,
-        population: 2000,
-    });
+    // Avec influence : succès MÊME avec une faible population.
+    w.nations[ni].influence = sim::SWARM_INFLUENCE;
     let ev = w.apply(Command::Swarm {
         from_x: x,
         from_y: y,
         to_x: near.0,
         to_y: near.1,
     });
-    assert!(matches!(ev[0], Event::Swarmed { .. }), "doit essaimer");
+    assert!(matches!(ev[0], Event::Swarmed { .. }), "doit s'étendre");
     assert_eq!(w.tile(near.0, near.1).owner, Some(0));
+    assert_eq!(
+        w.tile(near.0, near.1).population,
+        0.0,
+        "la case étendue est vide (aucune pop déplacée)"
+    );
 }
 
 #[test]

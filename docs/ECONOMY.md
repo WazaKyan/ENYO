@@ -1,5 +1,17 @@
 # ENYO — Économie interne (S8) : plan
 
+## RÉVISION (30/06b) — REFONTE EU5 (en cours)
+
+Grand virage de design (réponses joueur) — implémenté par tranches :
+- **Étendre ne consomme plus de population.** `swarm` (« Étendre ») revendique une
+  case terre **atteignable** contre de l'**influence** ; plus de seuil 1000, plus de
+  division 50/50. La case est **vide** (on y bâtit une ville pour la peupler).
+  ✅ **fait (tranche 1)** — effet mesuré : bien plus de villes et de population.
+- **À venir** : (2) la **population ne vit que sur les villes** ; les villes connectées
+  partagent un **pool d'emplois LIMITÉ** (façon EU5) que les bâtiments se disputent
+  (sous-effectif → moins de production) ; (3) **ordres d'unités + pathfinding** (clic →
+  chemin intelligent, multi-tours) ; (4) **arbre de recherche** (remplace les 4 branches).
+
 ## RÉVISION (30/06) — villes/population d'abord + grosse passe de PERF
 
 - **IA priorise les VILLES (population)** : la pop ne croît que sur les villes →

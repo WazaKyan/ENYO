@@ -1208,8 +1208,9 @@ impl App {
                 continue;
             }
             let (nx, ny) = (nx as u32, ny as u32);
-            let t = w.tile(nx, ny);
-            if t.owner == Some(player) && t.population >= 1000.0 {
+            // Étendre ne demande plus de population : n'importe quelle case possédée
+            // voisine peut servir de point de lancement.
+            if w.tile(nx, ny).owner == Some(player) {
                 return Some((nx, ny));
             }
         }
@@ -1238,11 +1239,6 @@ impl App {
         let owner = self.world.as_ref().and_then(|w| w.tile(tx, ty).owner);
         match self.tool {
             Tool::Swarm => {
-                let (here_owner, here_pop) = self
-                    .world
-                    .as_ref()
-                    .map(|w| (w.tile(tx, ty).owner, w.tile(tx, ty).population))
-                    .unwrap_or((None, 0.0));
                 if let Some((sx, sy)) = self.pending_src.take() {
                     // 2e clic : cible explicite depuis la source choisie.
                     let ev = self.apply(Command::Swarm {
@@ -1252,14 +1248,14 @@ impl App {
                         to_y: ty,
                     });
                     self.report(&ev);
-                } else if here_owner == Some(player) && here_pop >= 1000.0 {
-                    // Clic sur une de SES villes ≥ 1000 hab : source explicite.
+                } else if owner == Some(player) {
+                    // Clic sur une de SES cases : point de lancement explicite (étendre
+                    // ne demande plus de population).
                     self.pending_src = Some((tx, ty));
                     self.last_msg = format!("source ({tx},{ty}) — clique une case libre voisine");
-                } else if here_owner.is_none() {
-                    // Clic sur une case LIBRE : auto-source depuis une ville voisine
-                    // ≥ 1000 hab (comme l'IA : on vise la cible, la source est
-                    // trouvée toute seule). Un seul clic suffit.
+                } else if owner.is_none() {
+                    // Clic sur une case LIBRE : on s'étend dedans depuis une case
+                    // possédée voisine (un seul clic). Coûte de l'influence.
                     match self.adjacent_source(tx, ty) {
                         Some((sx, sy)) => {
                             let ev = self.apply(Command::Swarm {
@@ -1272,14 +1268,12 @@ impl App {
                         }
                         None => {
                             self.last_msg =
-                                "Étendre : vise une case LIBRE voisine d'une de tes villes ≥ 1000 hab"
-                                    .to_string();
+                                "Étendre : vise une case LIBRE voisine de ton territoire".to_string();
                         }
                     }
                 } else {
                     self.last_msg =
-                        "Étendre : cible une case LIBRE (terre) à côté d'une ville ≥ 1000 hab"
-                            .to_string();
+                        "Étendre : cible une case LIBRE (terre) voisine de ton territoire".to_string();
                 }
             }
             Tool::War => match owner {
@@ -1978,9 +1972,9 @@ fn tool_tooltip(t: Tool) -> Option<Vec<String>> {
         ],
         Tool::Swarm => vec![
             "Etendre".to_string(),
-            "Clique une case LIBRE voisine d'une de tes villes >= 1000 hab.".to_string(),
+            "Clique une case LIBRE voisine de ton territoire.".to_string(),
             format!(
-                "Cout {} influence ; la ville source perd la moitie de sa pop.",
+                "Cout {} influence ; revendique une case VIDE (bati une ville pour la peupler).",
                 sim::SWARM_INFLUENCE
             ),
         ],
@@ -2050,9 +2044,9 @@ fn feedback(events: &[Event]) -> Option<String> {
             Event::Settled {
                 x, y, population, ..
             } => return Some(format!("fonde ({x},{y}) +{population} hab")),
-            Event::Swarmed {
-                to_x, to_y, moved, ..
-            } => return Some(format!("expansion vers ({to_x},{to_y}) +{moved:.0} hab")),
+            Event::Swarmed { to_x, to_y, .. } => {
+                return Some(format!("territoire étendu en ({to_x},{to_y})"))
+            }
             Event::Researched { branch, tier, .. } => {
                 let b = ["Essor", "Terroir", "Fer", "Lien"]
                     .get(*branch as usize)

@@ -33,8 +33,10 @@ ENYO tient en **7 systèmes cœur** (hors substrat géographique), reliés par *
 > nourriture** — chaque case a un **seuil de subsistance** ; au-delà, la population doit
 > être nourrie par des **fermes**, sinon **famine** (déclin). L'**« essaimage » de S2
 > est renommé « expansion » (Étendre)** = revendiquer du territoire (coûte de
-> l'influence) ; il déplace toujours des colons (main-d'œuvre). Modèle et calibrage
-> **faisant autorité** : `docs/ECONOMY.md` § RÉVISION.
+> l'influence). **REFONTE EU5 (30/06)** : Étendre **ne déplace plus de population**
+> (fini le seuil 1000 et le 50/50) — la case revendiquée est **vide**, on y bâtit une
+> **ville** pour la peupler (la population ne vit que sur les villes). Modèle et
+> calibrage **faisant autorité** : `docs/ECONOMY.md` § RÉVISION.
 
 > **Révision militaire (S5) — UNITÉS.** **Tout le militaire passe par les unités**
 > (Mobiliser/Marcher retirés) : la `force` (stat de case produite par les casernes)

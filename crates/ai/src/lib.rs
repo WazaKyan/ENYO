@@ -137,14 +137,11 @@ fn expansion(
     let rival = nearest_rival(world, nation, anchors).and_then(|r| anchors.get(&r).copied());
     let mut cmds = Vec::new();
     let mut targeted: HashSet<usize> = HashSet::new();
-    // N'itère que les cases POSSÉDÉES (pré-calculées), pas les 400k cases.
+    // N'itère que les cases POSSÉDÉES (pré-calculées), pas les 400k cases. Étendre
+    // ne demande plus de population : on peut s'étendre depuis N'IMPORTE quelle case.
     for &idx in owned {
         if budget <= 0 {
             break;
-        }
-        let t = &world.tiles[idx];
-        if t.population < 1000.0 {
-            continue;
         }
         let x = idx as i64 % w;
         let y = idx as i64 / w;

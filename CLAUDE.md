@@ -28,7 +28,7 @@ Jeu de stratégie **minimaliste**, monde entier, en **Rust**, où le joueur fait
 ## Les 7 systèmes cœur (détail dans `docs/GAMEPLAY.md`)
 
 - **S1 Physique de la case** — croissance logistique vers une *capacité de charge* dérivée du terrain ; famine = `pop > capacité` ; densité → congestion → villes **émergentes**.
-- **S2 Essaimage & franchissement** — à **1000 pop** (fixe), division **50/50** vers une case **choisie par le joueur** (auto pour les IA), dans un **budget de coût terrain** tech-gated. S1 *gate* S2.
+- **S2 Expansion (« Étendre ») & franchissement** — **REFONTE (EU5, 30/06)** : revendiquer une case terre **atteignable** (budget de coût terrain tech-gated) contre de l'**influence** ; **ne consomme PLUS de population** (fini le seuil 1000 et la division 50/50). La case revendiquée est **vide** ; on y bâtit une **ville** pour la peupler (la population ne vit que sur les villes — cf. refonte population en cours). Cible **choisie par le joueur** (auto pour les IA).
 - **S3 Savoir & tech** — savoir = flux *pur* des cases denses → arbre à **4 branches** (paliers = âges).
 - **S4 Provinces émergentes** — flood-fill des cases connexes d'une nation ; agrégat unique lu par Directeur/diplo/militaire.
 - **S5 Militaire** — la force est une *stat de case* ; mouvement via la primitive d'essaimage ; combat sur case → `devastation`.

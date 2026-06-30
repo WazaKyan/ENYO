@@ -68,8 +68,10 @@ Le joueur fait croître et essaimer sa civilisation sur la grille.
 > **bâtiment** qu'on bâtit avec habitation + argent), elle est **bornée par la
 > nourriture** (fermes vs **famine** au-delà d'un seuil de subsistance par case), et
 > l'**« essaimage » (point 3) est renommé « expansion » (Étendre)** = revendiquer du
-> territoire (coûte de l'influence). Modèle et calibrage faisant autorité :
-> `docs/ECONOMY.md` § RÉVISION.
+> territoire (coûte de l'influence). **REFONTE EU5 (30/06)** : Étendre **ne consomme
+> plus de population** (fini le seuil 1000 et le 50/50) — case revendiquée **vide**,
+> on y bâtit une **ville** ; la population ne vit que sur les villes. Modèle et
+> calibrage faisant autorité : `docs/ECONOMY.md` § RÉVISION.
 
 > **Révision militaire (S5) — unités.** **Tout le militaire passe par les unités**
 > (Mobiliser/Marcher retirés) : agents discrets (PV, dégâts, portée, mouvement)
