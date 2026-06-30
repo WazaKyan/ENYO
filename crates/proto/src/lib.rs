@@ -89,6 +89,10 @@ pub enum Command {
     /// Déplace une unité vers une case atteignable dans ses points de mouvement
     /// (coût terrain + intempéries). L'unité est désignée par son id.
     MoveUnit { unit: u32, to_x: u32, to_y: u32 },
+    /// **Ordre de marche persistant** (S5) : l'unité se rend vers (to_x, to_y) par le
+    /// **chemin le plus court** (contournement des obstacles), avançant chaque tour
+    /// jusqu'à destination. `to == position actuelle` annule l'ordre.
+    OrderUnit { unit: u32, to_x: u32, to_y: u32 },
     /// Attaque avec une unité une case à portée contenant une unité ennemie
     /// (combat avec bonus de défense du terrain + malus d'attaque selon le type).
     AttackUnit { unit: u32, x: u32, y: u32 },
@@ -187,6 +191,8 @@ pub enum Event {
         to_y: u32,
         cost: u32,
     },
+    /// Un **ordre de marche** a été donné à une unité (destination persistante).
+    UnitOrdered { unit: u32, to_x: u32, to_y: u32 },
     /// Une unité en a attaqué une autre. `killed` = la défenseuse est détruite.
     UnitAttacked {
         attacker: u32,

@@ -22,6 +22,11 @@ pub struct Unit {
     pub hp: i32,
     /// Points de mouvement restants ce tour (rechargés chaque mois).
     pub moves_left: u32,
+    /// **Ordre de marche** persistant (S5) : destination vers laquelle l'unité avance
+    /// chaque tour par le plus court chemin. `None` = pas d'ordre. Non sérialisé dans
+    /// les vieux snapshots → `default` = None.
+    #[serde(default)]
+    pub order: Option<(u32, u32)>,
 }
 
 /// Stats figées d'un type d'unité (calibrage S5, single-source).

@@ -133,8 +133,9 @@ Les `--png/--region/--gif` du harness restent dispo. Replay depuis `.rec.jsonl`.
   pastille quand le zoom est trop petit (px < 6).
 - **Unités (S5) dans l'UI** : catégorie **Militaire** → recruter **Infanterie /
   Archers / Cavalerie** (outil `Create`, clic sur une **caserne**) + outil **Unités**
-  (1er clic = sélectionner sa propre unité ; 2e clic = **déplacer** vers une case
-  vide ou **attaquer** une unité ennemie). Les unités sont **dessinées sur la carte**
+  (1er clic = sélectionner sa propre unité ; 2e clic sur une case vide = **ordre de
+  marche** : l'unité s'y rend par le **plus court chemin**, sur plusieurs tours
+  (contourne les obstacles) ; 2e clic sur une unité ennemie = **attaquer**). Les unités sont **dessinées sur la carte**
   (jeton à la couleur de la nation, forme par type : carré/triangle/losange, **barre
   de PV**) ; l'unité sélectionnée est surlignée. Planche d'aperçu :
   `harness --unit-sheet f.png`.

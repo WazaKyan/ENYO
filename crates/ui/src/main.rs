@@ -1372,9 +1372,10 @@ impl App {
                             });
                             self.report(&ev);
                         }
-                        // Sinon : déplacer.
+                        // Sinon : ORDRE DE MARCHE — l'unité ira là par le plus court
+                        // chemin, sur plusieurs tours (clic sa propre case = annuler).
                         (Some((selid, _)), None) => {
-                            let ev = self.apply(Command::MoveUnit {
+                            let ev = self.apply(Command::OrderUnit {
                                 unit: selid,
                                 to_x: tx,
                                 to_y: ty,
@@ -2059,6 +2060,9 @@ fn feedback(events: &[Event]) -> Option<String> {
             }
             Event::UnitMoved { to_x, to_y, .. } => {
                 return Some(format!("unite -> ({to_x},{to_y})"))
+            }
+            Event::UnitOrdered { to_x, to_y, .. } => {
+                return Some(format!("unite en marche vers ({to_x},{to_y})"))
             }
             Event::UnitAttacked {
                 x,

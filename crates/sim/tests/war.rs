@@ -58,6 +58,7 @@ fn occupation_sets_score_without_capitulation() {
         y: 5,
         hp: 100,
         moves_left: 99,
+        order: None,
     });
     w.apply(Command::DeclareWar {
         nation: 0,
@@ -99,6 +100,7 @@ fn occupying_over_75_percent_forces_capitulation() {
         y: 5,
         hp: 120,
         moves_left: 99,
+        order: None,
     });
     w.apply(Command::DeclareWar {
         nation: 0,
@@ -134,6 +136,7 @@ fn peace_clears_occupation_without_annexation() {
         y: 5,
         hp: 100,
         moves_left: 99,
+        order: None,
     });
     w.apply(Command::DeclareWar {
         nation: 0,
@@ -171,6 +174,7 @@ fn war_is_deterministic() {
             y: 7,
             hp: 120,
             moves_left: 99,
+            order: None,
         });
         w.apply(Command::DeclareWar {
             nation: 0,

@@ -4,7 +4,7 @@
 //! parfait du replay/audit (cf. contrat dans `CLAUDE.md`). Enroulement sur X.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::tile::{Tile, TileKind};
 
@@ -109,6 +109,112 @@ pub fn reach_cost_with<F: Fn(&Tile) -> u32>(
         }
     }
     None
+}
+
+/// Distance de Manhattan (X enroulé) entre deux index de case.
+fn manhattan_idx(a: usize, b: usize, width: u32) -> u32 {
+    let w = width as i64;
+    let (ax, ay) = (a as i64 % w, a as i64 / w);
+    let (bx, by) = (b as i64 % w, b as i64 / w);
+    let dx = (ax - bx).abs();
+    let dx = dx.min(w - dx);
+    (dx + (ay - by).abs()) as u32
+}
+
+/// **Prochaine destination** d'un ordre de marche : Dijkstra borné déterministe (tas
+/// min sur (coût, index)) depuis `from` vers `to`, en **contournant les obstacles**.
+/// Reconstruit le chemin (ou vise le nœud exploré le plus proche du but si `to` est
+/// hors d'atteinte) et renvoie la case la **plus loin atteignable ce tour** (coût ≤
+/// `budget`) **libre** d'unité (`occupied` = cases occupées). Règle « au moins une
+/// case » : à pleins points (`budget == full_moves`), au moins le premier pas. `None`
+/// si aucun progrès possible. HashMap en lecture seule → rejeu déterministe.
+#[allow(clippy::too_many_arguments)]
+pub fn march_step<F: Fn(&Tile) -> u32>(
+    tiles: &[Tile],
+    width: u32,
+    height: u32,
+    from: usize,
+    to: usize,
+    budget: u32,
+    full_moves: u32,
+    occupied: &HashSet<usize>,
+    cost: F,
+) -> Option<usize> {
+    if from == to {
+        return None;
+    }
+    let mut dist: HashMap<usize, u32> = HashMap::new();
+    let mut prev: HashMap<usize, usize> = HashMap::new();
+    dist.insert(from, 0);
+    let mut heap = BinaryHeap::new();
+    heap.push(Reverse((0u32, from)));
+    let mut best_goal = from;
+    let mut best_key = (manhattan_idx(from, to, width), 0u32, from);
+    let mut reached = false;
+    let mut explored = 0usize;
+    while let Some(Reverse((d, idx))) = heap.pop() {
+        if d > *dist.get(&idx).unwrap_or(&u32::MAX) {
+            continue;
+        }
+        if idx == to {
+            reached = true;
+            break;
+        }
+        let key = (manhattan_idx(idx, to, width), d, idx);
+        if key < best_key {
+            best_key = key;
+            best_goal = idx;
+        }
+        explored += 1;
+        if explored > 4000 {
+            break;
+        }
+        for nb in neighbors(idx, width, height).into_iter().flatten() {
+            let c = cost(&tiles[nb]);
+            if c == u32::MAX {
+                continue;
+            }
+            let nd = d.saturating_add(c);
+            if nd < *dist.get(&nb).unwrap_or(&u32::MAX) {
+                dist.insert(nb, nd);
+                prev.insert(nb, idx);
+                heap.push(Reverse((nd, nb)));
+            }
+        }
+    }
+    let goal = if reached { to } else { best_goal };
+    if goal == from {
+        return None;
+    }
+    let mut path = vec![goal];
+    let mut cur = goal;
+    while cur != from {
+        cur = *prev.get(&cur)?;
+        path.push(cur);
+    }
+    path.reverse();
+    let mut dest = None;
+    for &idx in &path {
+        if idx == from {
+            continue;
+        }
+        if *dist.get(&idx).unwrap_or(&u32::MAX) > budget {
+            break;
+        }
+        if !occupied.contains(&idx) {
+            dest = Some(idx);
+        }
+    }
+    // « Au moins une case » : à pleins points, on tente le premier pas (le sim
+    // l'autorise même si trop cher) → l'unité n'est jamais gelée par la météo.
+    if dest.is_none() && budget == full_moves {
+        if let Some(&first) = path.get(1) {
+            if !occupied.contains(&first) {
+                dest = Some(first);
+            }
+        }
+    }
+    dest
 }
 
 /// Coût d'entrée pour une **unité navale** (galère) : l'eau est rapide, la terre

@@ -17,8 +17,13 @@ Grand virage de design (réponses joueur) — implémenté par tranches :
   connexes + staffing) ; la production (industrie/commerce/éducation/caserne/port/ferme)
   est multipliée par ce taux. L'**infrastructure** devient inutile (la région est déjà
   un seul marché). ✅ **fait (tranche 2)** — éco fonctionnelle (tech 10+, pop 500k+).
-- **À venir** : (3) **ordres d'unités + pathfinding** (clic → chemin intelligent,
-  multi-tours) ; (4) **arbre de recherche** (remplace les 4 branches).
+- **Ordres d'unités + pathfinding.** Le joueur clique une destination → l'unité reçoit
+  un **ordre de marche persistant** (`Command::OrderUnit`, champ `Unit.order`) et y va
+  par le **plus court chemin** (Dijkstra `path::march_step`, contournement des
+  obstacles), un peu chaque tour, jusqu'à l'arrivée (l'ordre se lève alors). Résolu
+  dans `resolve_turn` (pas de double-déplacement). L'IA garde son mouvement par tour.
+  ✅ **fait (tranche 3)** — test `units::order_unit_pathfinds_around_obstacle_over_turns`.
+- **À venir** : (4) **arbre de recherche** (remplace les 4 branches).
 
 ## RÉVISION (30/06) — villes/population d'abord + grosse passe de PERF
 

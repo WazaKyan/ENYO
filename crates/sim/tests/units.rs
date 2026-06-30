@@ -187,6 +187,53 @@ fn unit_always_advances_one_tile_through_costly_terrain() {
     assert_eq!(w.units[0].moves_left, 0, "tout le mouvement est consommé");
 }
 
+#[test]
+fn order_unit_pathfinds_around_obstacle_over_turns() {
+    // Ordre de marche : on vise une destination lointaine ; l'unité prend le plus
+    // court chemin (en CONTOURNANT un obstacle) sur plusieurs tours, et l'ordre se
+    // lève à l'arrivée. Le mouvement n'a lieu qu'à la résolution du tour (Step).
+    let mut w = World::new(7, 40, 30);
+    for y in 4..7 {
+        for x in 5..20 {
+            plain(&mut w, x, y);
+        }
+    }
+    // Mur d'eau en (10,5) : l'unité doit contourner par (10,4) ou (10,6).
+    let wall = idx(&w, 10, 5);
+    w.tiles[wall].kind = TileKind::Ocean;
+    setup_barracks(&mut w, 5, 5, 0);
+    w.apply(Command::CreateUnit {
+        x: 5,
+        y: 5,
+        nation: 0,
+        kind: UnitKind::Infantry,
+    });
+    let id = w.units[0].id;
+    let ev = w.apply(Command::OrderUnit {
+        unit: id,
+        to_x: 15,
+        to_y: 5,
+    });
+    assert!(matches!(ev[0], Event::UnitOrdered { .. }), "ordre donné");
+    assert_eq!(
+        (w.units[0].x, w.units[0].y),
+        (5, 5),
+        "pas de mouvement avant la résolution du tour"
+    );
+    for _ in 0..40 {
+        w.apply(Command::Step);
+        if (w.units[0].x, w.units[0].y) == (15, 5) {
+            break;
+        }
+    }
+    assert_eq!(
+        (w.units[0].x, w.units[0].y),
+        (15, 5),
+        "l'unité contourne l'obstacle et atteint la destination"
+    );
+    assert_eq!(w.units[0].order, None, "l'ordre est levé à l'arrivée");
+}
+
 /// Dégâts d'une attaque infligés au défenseur, pour un terrain défenseur (veg, rug)
 /// et un terrain attaquant (attacker_veg) donnés.
 fn attack_damage(attacker: UnitKind, attacker_veg: f32, def_veg: f32, def_rug: f32) -> i32 {
@@ -206,6 +253,7 @@ fn attack_damage(attacker: UnitKind, attacker_veg: f32, def_veg: f32, def_rug: f
         y: 5,
         hp: 300,
         moves_left: 30,
+        order: None,
     });
     w.units.push(Unit {
         id: 2,
@@ -215,6 +263,7 @@ fn attack_damage(attacker: UnitKind, attacker_veg: f32, def_veg: f32, def_rug: f
         y: 5,
         hp: 300,
         moves_left: 30,
+        order: None,
     });
     w.apply(Command::DeclareWar {
         nation: 0,
@@ -260,6 +309,7 @@ fn attack_requires_war() {
         y: 5,
         hp: 100,
         moves_left: 30,
+        order: None,
     });
     w.units.push(Unit {
         id: 2,
@@ -269,6 +319,7 @@ fn attack_requires_war() {
         y: 5,
         hp: 100,
         moves_left: 30,
+        order: None,
     });
     let ev = w.apply(Command::AttackUnit { unit: 1, x: 6, y: 5 });
     assert!(matches!(ev[0], Event::CommandRejected { .. }), "pas en guerre -> rejet");
@@ -287,6 +338,7 @@ fn unit_destroyed_at_zero_hp() {
         y: 5,
         hp: 300,
         moves_left: 55,
+        order: None,
     });
     w.units.push(Unit {
         id: 2,
@@ -296,6 +348,7 @@ fn unit_destroyed_at_zero_hp() {
         y: 5,
         hp: 10, // fragile -> détruit en un coup
         moves_left: 30,
+        order: None,
     });
     w.apply(Command::DeclareWar {
         nation: 0,
@@ -331,6 +384,7 @@ fn unit_regenerates_on_home_territory_only() {
         y: 5,
         hp: 50,
         moves_left: 30,
+        order: None,
     });
     let mp0 = w.nation(0).unwrap().manpower;
     w.apply(Command::Step);
@@ -351,6 +405,7 @@ fn unit_regenerates_on_home_territory_only() {
         y: 7,
         hp: 50,
         moves_left: 30,
+        order: None,
     });
     w2.apply(Command::Step);
     assert_eq!(w2.units[0].hp, 50, "pas de régénération en terre neutre");

@@ -19,7 +19,7 @@ pub mod tile;
 pub mod unit;
 pub mod worldgen;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use diplo::Diplomacy;
 use nation::Nation;
@@ -306,6 +306,7 @@ impl World {
                 kind,
             } => self.create_unit(x, y, nation, kind),
             Command::MoveUnit { unit, to_x, to_y } => self.move_unit(unit, to_x, to_y),
+            Command::OrderUnit { unit, to_x, to_y } => self.order_unit(unit, to_x, to_y),
             Command::AttackUnit { unit, x, y } => self.attack_unit(unit, x, y),
             Command::Embark { unit, transport } => self.embark(unit, transport),
             Command::Disembark {
@@ -566,6 +567,9 @@ impl World {
         for u in &mut self.units {
             u.moves_left = unit::unit_stats(u.kind).moves;
         }
+        // Ordres de marche (S5) : les unités avec un ordre avancent vers leur
+        // destination (plus court chemin), un peu chaque tour.
+        let order_events = self.advance_orders();
 
         // Régénération (S5) : une unité sur son **territoire national** récupère des
         // PV chaque mois en consommant du manpower (ordre des unités → déterministe).
@@ -609,7 +613,8 @@ impl World {
             avg_vegetation,
             "tour résolu"
         );
-        let mut events = cap_events;
+        let mut events = order_events;
+        events.extend(cap_events);
         events.push(Event::TurnResolved {
             turn: self.turn,
             month,
@@ -1156,6 +1161,7 @@ impl World {
             y,
             hp: stats.max_hp,
             moves_left: stats.moves,
+            order: None,
         });
         vec![Event::UnitCreated {
             unit: id,
@@ -1254,6 +1260,82 @@ impl World {
         }
     }
 
+    /// Donne un **ordre de marche** persistant à une unité : elle ira vers (tx, ty)
+    /// par le plus court chemin, un peu chaque tour (résolu dans `resolve_turn`).
+    /// Cliquer sa case actuelle annule l'ordre. Le mouvement n'a PAS lieu ici (il se
+    /// fait à la résolution du tour) → pas de double-déplacement.
+    fn order_unit(&mut self, unit_id: u32, tx: u32, ty: u32) -> Vec<Event> {
+        if tx >= self.width || ty >= self.height {
+            return reject("hors carte");
+        }
+        let Some(ui) = self.unit_index_by_id(unit_id) else {
+            return reject("unité inconnue");
+        };
+        if (self.units[ui].x, self.units[ui].y) == (tx, ty) {
+            self.units[ui].order = None; // ordre sur sa propre case = annulation
+        } else {
+            self.units[ui].order = Some((tx, ty));
+        }
+        vec![Event::UnitOrdered {
+            unit: unit_id,
+            to_x: tx,
+            to_y: ty,
+        }]
+    }
+
+    /// Fait avancer les unités ayant un **ordre de marche** vers leur destination
+    /// (un pas de `moves_left` chacune, plus court chemin). Appelé chaque tour après
+    /// la recharge des points de mouvement. Ordre des unités → déterministe.
+    fn advance_orders(&mut self) -> Vec<Event> {
+        let width = self.width;
+        // Cases occupées par une unité (test O(1) dans le pathfinding). Rebâtie une
+        // fois ; `move_unit` reste le garde-fou contre l'empilement.
+        let occupied: HashSet<usize> = self
+            .units
+            .iter()
+            .map(|u| (u.y * width + u.x) as usize)
+            .collect();
+        let mut events = Vec::new();
+        for ui in 0..self.units.len() {
+            let Some((tx, ty)) = self.units[ui].order else {
+                continue;
+            };
+            if (self.units[ui].x, self.units[ui].y) == (tx, ty) {
+                self.units[ui].order = None;
+                continue;
+            }
+            let from = (self.units[ui].y * width + self.units[ui].x) as usize;
+            let to = (ty * width + tx) as usize;
+            let kind = self.units[ui].kind;
+            let owner = self.units[ui].owner;
+            let budget = self.units[ui].moves_left;
+            let full = unit::unit_stats(kind).moves;
+            let naval_tier = self.nation(owner).map(|n| n.tech[nation::LIEN]).unwrap_or(0);
+            let dest = if unit::unit_stats(kind).naval {
+                path::march_step(
+                    &self.tiles, width, self.height, from, to, budget, full, &occupied,
+                    path::naval_move_cost,
+                )
+            } else {
+                path::march_step(
+                    &self.tiles, width, self.height, from, to, budget, full, &occupied,
+                    |t| path::unit_move_cost(t, naval_tier),
+                )
+            };
+            if let Some(d) = dest {
+                let (dx, dy) = (d as u32 % width, d as u32 / width);
+                let id = self.units[ui].id;
+                events.extend(self.move_unit(id, dx, dy));
+            }
+            // `move_unit` ne réordonne ni ne supprime d'unité → l'index `ui` reste
+            // valide. Arrivée à destination : on lève l'ordre.
+            if (self.units[ui].x, self.units[ui].y) == (tx, ty) {
+                self.units[ui].order = None;
+            }
+        }
+        events
+    }
+
     /// Embarque une unité terrestre `unit` sur une **galère** `transport` adjacente.
     fn embark(&mut self, unit_id: u32, transport_id: u32) -> Vec<Event> {
         let Some(ti) = self.unit_index_by_id(transport_id) else {
@@ -1341,6 +1423,7 @@ impl World {
             y: ty,
             hp: carried.hp.min(stats.max_hp),
             moves_left: 0,
+            order: None,
         });
         let to = self.index(tx, ty);
         self.update_occupation(to, owner); // débarquer sur une terre ennemie l'occupe
@@ -1504,6 +1587,10 @@ impl World {
             fnv_u32(&mut h, u.y);
             fnv_u32(&mut h, u.hp as u32);
             fnv_u32(&mut h, u.moves_left);
+            // Ordre de marche (S5) : inclus dans le checksum (état → rejeu exact).
+            let (ox, oy) = u.order.map_or((u32::MAX, u32::MAX), |(x, y)| (x, y));
+            fnv_u32(&mut h, ox);
+            fnv_u32(&mut h, oy);
         }
         // Cargo des galères (BTreeMap → ordre des clés, déterministe).
         for (gid, load) in &self.cargo {
